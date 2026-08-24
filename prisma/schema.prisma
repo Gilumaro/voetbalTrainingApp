@@ -1,0 +1,119 @@
+// Prisma schema — voetbal training planner
+// Docs: https://pris.ly/d/prisma-schema
+// NOTE: SQLite does not support Prisma `enum`s. String fields below carry a
+// fixed set of allowed values, enforced in the app layer via Zod (see lib/enums.ts).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// A single training form (warm-up, exercise, or match form).
+model Drill {
+  id              Int      @id @default(autoincrement())
+  title           String
+  type            String // WARMUP | EXERCISE | MATCHFORM
+  theme           String // ATTACK | DEFEND | TRANSITION | NEUTRAL
+  ageMin          Int      @default(15)
+  ageMax          Int      @default(15)
+  fieldType       String // CIRCUIT | QUARTER | HALF | FULL | INDOOR
+  footprintX      Float // required width in metres
+  footprintY      Float // required length in metres
+  minPlayers      Int
+  idealPlayers    Int
+  maxPlayers      Int
+  durationMin     Int
+  // How many balls the drill needs: FIXED (use placed ball markers) | PER_PLAYER
+  // (one per player, e.g. everyone dribbles) | PER_PAIR (one per two players).
+  ballScaling     String   @default("FIXED")
+  description     String
+  coachingPoints  String?
+  progressions    String?
+  simplifications String?
+  videoUrl        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  aids     DrillAid[]
+  stations BlockStation[]
+}
+
+/// A placed aid (goal/cone/marker) within a drill's footprint. Coordinates are in
+/// metres relative to the footprint origin (0,0 = top-left), so diagrams can be drawn.
+model DrillAid {
+  id       Int     @id @default(autoincrement())
+  drill    Drill   @relation(fields: [drillId], references: [id], onDelete: Cascade)
+  drillId  Int
+  type     String // BIG_GOAL | SMALL_GOAL | DISC_CONE | CONE | PLAYER | BALL | MARKER
+  x        Float
+  y        Float
+  rotation Float   @default(0)
+  label    String?
+
+  @@index([drillId])
+}
+
+/// A saved (generated then refined) training session.
+model Session {
+  id          Int      @id @default(autoincrement())
+  date        DateTime @default(now())
+  label       String?
+  ageCategory String // e.g. "U15"
+  theme       String
+  durationMin Int
+  players     Int
+  spaceType   String // HALF | QUARTER | FULL | INDOOR
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  blocks SessionBlock[]
+}
+
+/// A time-block within a session: whole-group or a split (two parallel stations).
+model SessionBlock {
+  id          Int     @id @default(autoincrement())
+  session     Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId   Int
+  order       Int
+  kind        String // WHOLE | SPLIT
+  durationMin Int
+  label       String?
+
+  stations BlockStation[]
+
+  @@index([sessionId])
+}
+
+/// One drill running in a block, for a given group, on a given side of the pitch.
+model BlockStation {
+  id                 Int          @id @default(autoincrement())
+  block              SessionBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  blockId            Int
+  drill              Drill        @relation(fields: [drillId], references: [id])
+  drillId            Int
+  group              String // ALL | A | B
+  side               String // FULL | LEFT | RIGHT
+  order              Int          @default(0)
+  placementOverrides String? // JSON: coach's nudged aid positions
+
+  @@index([blockId])
+  @@index([drillId])
+}
+
+/// Singleton (id = 1): the coach's materials inventory and default pitch size.
+model Settings {
+  id         Int      @id @default(1)
+  bigGoals   Int      @default(2)
+  smallGoals Int      @default(4)
+  discCones  Int      @default(40)
+  cones      Int      @default(20)
+  pinnies    Int      @default(16)
+  balls      Int      @default(16)
+  pitchX     Float    @default(50) // available width in metres (half-pitch default)
+  pitchY     Float    @default(35) // available length in metres
+  updatedAt  DateTime @updatedAt
+}

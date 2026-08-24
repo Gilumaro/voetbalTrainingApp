@@ -1,0 +1,14 @@
+node_modules
+.next
+generated
+npm-debug.log
+.git
+.gitignore
+*.db
+*.db-journal
+.env*
+data
+.claude
+.windsurf
+.agents
+README.md
