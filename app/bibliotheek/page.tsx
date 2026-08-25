@@ -4,6 +4,7 @@ import PitchDiagram from "@/components/PitchDiagram";
 import {
   DRILL_TYPES,
   DRILL_TYPE_LABELS,
+  SUB_THEMES,
   THEMES,
   THEME_LABELS,
   type DrillType,
@@ -18,7 +19,10 @@ export default async function BibliotheekPage({
   const sp = await searchParams;
   const type = (sp.type as DrillType) || undefined;
   const theme = (sp.theme as Theme) || undefined;
-  const drills = await getDrills({ type, theme });
+  const subTheme = (sp.subTheme as string) || undefined;
+  const drills = await getDrills({ type, theme, subTheme });
+  // Sub-theme options: scoped to the chosen theme, else all.
+  const subThemeOptions = theme ? SUB_THEMES[theme] : Object.values(SUB_THEMES).flat();
 
   return (
     <div className="space-y-6">
@@ -52,10 +56,19 @@ export default async function BibliotheekPage({
             ))}
           </select>
         </label>
+        <label className="text-sm">
+          <span className="block font-medium text-zinc-700">Sub-thema</span>
+          <select name="subTheme" defaultValue={subTheme ?? ""} className="mt-1 max-w-[16rem] rounded-lg border border-zinc-300 px-3 py-2">
+            <option value="">Alle</option>
+            {subThemeOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </label>
         <button type="submit" className="rounded-lg bg-zinc-800 px-4 py-2 font-medium text-white hover:bg-zinc-700">
           Filter
         </button>
-        {(type || theme) && (
+        {(type || theme || subTheme) && (
           <Link href="/bibliotheek" className="px-2 py-2 text-sm text-zinc-500 hover:text-zinc-800">
             Wissen
           </Link>
@@ -78,6 +91,7 @@ export default async function BibliotheekPage({
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <Badge>{DRILL_TYPE_LABELS[d.type as DrillType]}</Badge>
                 <Badge tone="theme">{THEME_LABELS[d.theme as Theme]}</Badge>
+                {d.subTheme && <Badge tone="sub">{d.subTheme}</Badge>}
               </div>
               <p className="mt-2 text-xs text-zinc-500">
                 {d.minPlayers}–{d.maxPlayers} spelers · {d.durationMin} min · {d.footprintX}×{d.footprintY} m
@@ -90,13 +104,15 @@ export default async function BibliotheekPage({
   );
 }
 
-function Badge({ children, tone }: { children: React.ReactNode; tone?: "theme" }) {
+function Badge({ children, tone }: { children: React.ReactNode; tone?: "theme" | "sub" }) {
   return (
     <span className={
       "rounded-full px-2 py-0.5 text-xs font-medium " +
       (tone === "theme"
         ? "bg-sky-50 text-sky-700"
-        : "bg-emerald-50 text-emerald-700")
+        : tone === "sub"
+          ? "bg-indigo-50 text-indigo-700"
+          : "bg-emerald-50 text-emerald-700")
     }>
       {children}
     </span>

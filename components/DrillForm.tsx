@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import PitchDiagram, { type DiagramAid } from "./PitchDiagram";
+import PitchDiagram, { type DiagramAction, type DiagramAid } from "./PitchDiagram";
 import {
+  ACTION_KINDS,
+  ACTION_KIND_LABELS,
   AID_TYPES,
   AID_TYPE_LABELS,
   BALL_SCALINGS,
@@ -11,15 +13,19 @@ import {
   DRILL_TYPE_LABELS,
   FIELD_TYPES,
   FIELD_TYPE_LABELS,
+  SUB_THEMES,
   THEMES,
   THEME_LABELS,
+  type ActionKind,
   type AidType,
+  type Theme,
 } from "@/lib/enums";
 
 export type DrillFormValues = {
   title: string;
   type: string;
   theme: string;
+  subTheme?: string | null;
   ageMin: number;
   ageMax: number;
   fieldType: string;
@@ -31,17 +37,22 @@ export type DrillFormValues = {
   durationMin: number;
   ballScaling: string;
   description: string;
+  setup?: string | null;
+  steps: string[];
+  rules?: string | null;
   coachingPoints?: string | null;
   progressions?: string | null;
   simplifications?: string | null;
   videoUrl?: string | null;
   aids: DiagramAid[];
+  actions: DiagramAction[];
 };
 
 const EMPTY: DrillFormValues = {
   title: "",
   type: "EXERCISE",
   theme: "ATTACK",
+  subTheme: "",
   ageMin: 13,
   ageMax: 17,
   fieldType: "QUARTER",
@@ -53,11 +64,15 @@ const EMPTY: DrillFormValues = {
   durationMin: 15,
   ballScaling: "FIXED",
   description: "",
+  setup: "",
+  steps: [],
+  rules: "",
   coachingPoints: "",
   progressions: "",
   simplifications: "",
   videoUrl: "",
   aids: [],
+  actions: [],
 };
 
 export default function DrillForm({
@@ -69,10 +84,28 @@ export default function DrillForm({
   initial?: Partial<DrillFormValues>;
   submitLabel?: string;
 }) {
-  const start = { ...EMPTY, ...initial, aids: initial?.aids ?? [] };
+  const start = {
+    ...EMPTY,
+    ...initial,
+    aids: initial?.aids ?? [],
+    actions: initial?.actions ?? [],
+    steps: initial?.steps ?? [],
+  };
   const [footprintX, setFootprintX] = useState(start.footprintX);
   const [footprintY, setFootprintY] = useState(start.footprintY);
+  const [theme, setTheme] = useState(start.theme);
+  const [subTheme, setSubTheme] = useState(start.subTheme ?? "");
   const [aids, setAids] = useState<DiagramAid[]>(start.aids);
+
+  const subThemeOptions = SUB_THEMES[theme as Theme] ?? [];
+  function onThemeChange(next: string) {
+    setTheme(next);
+    // Reset sub-theme if it no longer belongs to the newly chosen theme.
+    const opts = SUB_THEMES[next as Theme] ?? [];
+    if (!opts.includes(subTheme)) setSubTheme("");
+  }
+  const [actions, setActions] = useState<DiagramAction[]>(start.actions);
+  const [steps, setSteps] = useState<string[]>(start.steps);
 
   function updateAid(i: number, patch: Partial<DiagramAid>) {
     setAids((prev) => prev.map((a, idx) => (idx === i ? { ...a, ...patch } : a)));
@@ -87,6 +120,39 @@ export default function DrillForm({
     setAids((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  function updateAction(i: number, patch: Partial<DiagramAction>) {
+    setActions((prev) => prev.map((a, idx) => (idx === i ? { ...a, ...patch } : a)));
+  }
+  function addAction() {
+    const cx = Math.round(footprintX / 2);
+    setActions((prev) => [
+      ...prev,
+      { kind: "PASS", fromX: cx, fromY: Math.round(footprintY * 0.7), toX: cx, toY: Math.round(footprintY * 0.3) },
+    ]);
+  }
+  function removeAction(i: number) {
+    setActions((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  function updateStep(i: number, value: string) {
+    setSteps((prev) => prev.map((s, idx) => (idx === i ? value : s)));
+  }
+  function addStep() {
+    setSteps((prev) => [...prev, ""]);
+  }
+  function removeStep(i: number) {
+    setSteps((prev) => prev.filter((_, idx) => idx !== i));
+  }
+  function moveStep(i: number, dir: -1 | 1) {
+    setSteps((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }
+
   return (
     <form action={action} className="grid gap-8 lg:grid-cols-[1fr_360px]">
       {/* ---- Left column: fields ---- */}
@@ -96,10 +162,65 @@ export default function DrillForm({
           <div className="grid grid-cols-2 gap-4">
             <Select name="type" label="Type" defaultValue={start.type}
               options={DRILL_TYPES.map((t) => [t, DRILL_TYPE_LABELS[t]])} />
-            <Select name="theme" label="Thema" defaultValue={start.theme}
-              options={THEMES.map((t) => [t, THEME_LABELS[t]])} />
+            <label className="block">
+              <span className="text-sm font-medium text-zinc-700">Thema</span>
+              <select value={theme} onChange={(e) => onThemeChange(e.target.value)} className={inputCls}>
+                {THEMES.map((t) => (
+                  <option key={t} value={t}>{THEME_LABELS[t]}</option>
+                ))}
+              </select>
+              <input type="hidden" name="theme" value={theme} />
+            </label>
           </div>
-          <Textarea name="description" label="Omschrijving" defaultValue={start.description} required />
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">Sub-thema (leerdoel)</span>
+            <select
+              name="subTheme"
+              value={subTheme}
+              onChange={(e) => setSubTheme(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">— geen —</option>
+              {subThemeOptions.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </label>
+          <Textarea name="description" label="Korte omschrijving" defaultValue={start.description} required />
+        </Section>
+
+        <Section title="Instructies">
+          <Textarea name="setup" label="Opstelling (hoe zet ik het veld klaar?)" defaultValue={start.setup ?? ""} />
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-sm font-medium text-zinc-700">Stappen (genummerd, om voor te lezen)</span>
+              <button type="button" onClick={addStep}
+                className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700">
+                + stap
+              </button>
+            </div>
+            <div className="space-y-2">
+              {steps.length === 0 && (
+                <p className="text-xs text-zinc-400">Nog geen stappen. Voeg concrete instructies toe (bijv. “Speler A passt in op B”).</p>
+              )}
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-1.5">
+                  <span className="mt-2 w-4 text-right text-xs text-zinc-400">{i + 1}.</span>
+                  <input type="text" value={s}
+                    onChange={(e) => updateStep(i, e.target.value)}
+                    placeholder="Concrete instructie…"
+                    className="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm" />
+                  <button type="button" onClick={() => moveStep(i, -1)} title="omhoog"
+                    className="rounded px-1 py-1 text-xs text-zinc-500 hover:bg-zinc-100">↑</button>
+                  <button type="button" onClick={() => moveStep(i, 1)} title="omlaag"
+                    className="rounded px-1 py-1 text-xs text-zinc-500 hover:bg-zinc-100">↓</button>
+                  <button type="button" onClick={() => removeStep(i)} title="verwijderen"
+                    className="rounded px-1.5 py-1 text-xs text-red-500 hover:bg-red-50">✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Textarea name="rules" label="Spelregels" defaultValue={start.rules ?? ""} />
         </Section>
 
         <Section title="Veld & spelers">
@@ -144,6 +265,7 @@ export default function DrillForm({
               footprintX={footprintX || 1}
               footprintY={footprintY || 1}
               aids={aids}
+              actions={actions}
               scale={7}
               className="w-full"
             />
@@ -187,7 +309,58 @@ export default function DrillForm({
             </div>
           </div>
 
+          <div className="rounded-xl border border-zinc-200 bg-white p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-sm font-semibold text-zinc-700">Bewegingen (pijlen)</p>
+              <button type="button" onClick={addAction}
+                className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700">
+                + toevoegen
+              </button>
+            </div>
+            <div className="space-y-2">
+              {actions.length === 0 && (
+                <p className="text-xs text-zinc-400">Nog geen bewegingen. Voeg pass-/loop-/dribbelpijlen toe.</p>
+              )}
+              {actions.map((a, i) => (
+                <div key={i} className="space-y-1 rounded border border-zinc-200 p-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-4 text-xs text-zinc-400">{i + 1}</span>
+                    <select
+                      value={a.kind}
+                      onChange={(e) => updateAction(i, { kind: e.target.value as ActionKind })}
+                      className="min-w-0 flex-1 rounded border border-zinc-300 px-1.5 py-1 text-xs"
+                    >
+                      {ACTION_KINDS.map((k) => (
+                        <option key={k} value={k}>{ACTION_KIND_LABELS[k]}</option>
+                      ))}
+                    </select>
+                    <button type="button" onClick={() => removeAction(i)}
+                      className="rounded px-1.5 py-1 text-xs text-red-500 hover:bg-red-50" title="verwijderen">✕</button>
+                  </div>
+                  <div className="flex items-center gap-1 pl-5 text-xs text-zinc-500">
+                    <span>van</span>
+                    <input type="number" value={a.fromX} title="van x (m)" step={0.5}
+                      onChange={(e) => updateAction(i, { fromX: Number(e.target.value) })}
+                      className="w-11 rounded border border-zinc-300 px-1 py-1" />
+                    <input type="number" value={a.fromY} title="van y (m)" step={0.5}
+                      onChange={(e) => updateAction(i, { fromY: Number(e.target.value) })}
+                      className="w-11 rounded border border-zinc-300 px-1 py-1" />
+                    <span>→</span>
+                    <input type="number" value={a.toX} title="naar x (m)" step={0.5}
+                      onChange={(e) => updateAction(i, { toX: Number(e.target.value) })}
+                      className="w-11 rounded border border-zinc-300 px-1 py-1" />
+                    <input type="number" value={a.toY} title="naar y (m)" step={0.5}
+                      onChange={(e) => updateAction(i, { toY: Number(e.target.value) })}
+                      className="w-11 rounded border border-zinc-300 px-1 py-1" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <input type="hidden" name="aids" value={JSON.stringify(aids)} />
+          <input type="hidden" name="actions" value={JSON.stringify(actions)} />
+          <input type="hidden" name="steps" value={JSON.stringify(steps.map((s) => s.trim()).filter(Boolean))} />
           <button type="submit"
             className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-semibold text-white hover:bg-emerald-700">
             {submitLabel}

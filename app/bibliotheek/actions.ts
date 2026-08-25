@@ -6,19 +6,29 @@ import { prisma } from "@/lib/prisma";
 import { parseDrillForm } from "@/lib/validation";
 
 export async function createDrill(formData: FormData) {
-  const { aids, ...drill } = parseDrillForm(formData);
+  const { aids, actions, steps, ...drill } = parseDrillForm(formData);
   const created = await prisma.drill.create({
-    data: { ...drill, aids: { create: aids } },
+    data: {
+      ...drill,
+      steps: JSON.stringify(steps),
+      aids: { create: aids },
+      actions: { create: actions },
+    },
   });
   revalidatePath("/bibliotheek");
   redirect(`/bibliotheek/${created.id}`);
 }
 
 export async function updateDrill(id: number, formData: FormData) {
-  const { aids, ...drill } = parseDrillForm(formData);
+  const { aids, actions, steps, ...drill } = parseDrillForm(formData);
   await prisma.drill.update({
     where: { id },
-    data: { ...drill, aids: { deleteMany: {}, create: aids } },
+    data: {
+      ...drill,
+      steps: JSON.stringify(steps),
+      aids: { deleteMany: {}, create: aids },
+      actions: { deleteMany: {}, create: actions },
+    },
   });
   revalidatePath("/bibliotheek");
   revalidatePath(`/bibliotheek/${id}`);

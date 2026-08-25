@@ -47,6 +47,58 @@ export type SessionDraft = {
   seed: number;
 };
 
+// ---- display grouping ------------------------------------------------------
+// Consecutive SPLIT blocks that share the same two station drills are a single
+// *rotation*: the stations are set up once and the groups swap sides between the
+// blocks. The UI collapses them into one section so it doesn't look duplicated.
+export type DisplayGroup =
+  | { kind: "single"; block: BlockDraft; index: number }
+  | { kind: "rotation"; blocks: BlockDraft[]; startIndex: number; endIndex: number };
+
+function splitDrillKey(b: BlockDraft): string {
+  const bySide = (side: StationSide) => b.stations.find((s) => s.side === side)?.drill.id ?? "";
+  return `${bySide("LEFT")}|${bySide("RIGHT")}`;
+}
+
+/** Fold the block list into render groups, collapsing rotations (§1.5). */
+export function groupBlocksForDisplay(blocks: BlockDraft[]): DisplayGroup[] {
+  const out: DisplayGroup[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const b = blocks[i];
+    if (b.kind === "SPLIT") {
+      const key = splitDrillKey(b);
+      let j = i + 1;
+      while (j < blocks.length && blocks[j].kind === "SPLIT" && splitDrillKey(blocks[j]) === key) j++;
+      if (j - i >= 2) {
+        out.push({ kind: "rotation", blocks: blocks.slice(i, j), startIndex: i, endIndex: j - 1 });
+        i = j;
+        continue;
+      }
+    }
+    out.push({ kind: "single", block: b, index: i });
+    i++;
+  }
+  return out;
+}
+
+/** For each group, the side + duration it spends at each rotation stop. */
+export function rotationSchedule(blocks: BlockDraft[]): {
+  group: StationGroup;
+  stops: { side: StationSide | undefined; drillTitle: string | undefined; durationMin: number }[];
+}[] {
+  const groups: StationGroup[] = [];
+  for (const b of blocks)
+    for (const s of b.stations) if (!groups.includes(s.group)) groups.push(s.group);
+  return groups.map((g) => ({
+    group: g,
+    stops: blocks.map((b) => {
+      const st = b.stations.find((s) => s.group === g);
+      return { side: st?.side, drillTitle: st?.drill.title, durationMin: b.durationMin };
+    }),
+  }));
+}
+
 export type GeneratorContext = {
   drills: DrillWithAids[];
   settings: Awaited<ReturnType<typeof getSettings>>;
@@ -58,7 +110,9 @@ export async function loadGeneratorContext(
   recentSessions = 3,
 ): Promise<GeneratorContext> {
   const [drills, settings, recent] = await Promise.all([
-    prisma.drill.findMany({ include: { aids: true } }),
+    prisma.drill.findMany({
+      include: { aids: true, actions: { orderBy: { order: "asc" } } },
+    }),
     getSettings(),
     prisma.session.findMany({
       orderBy: { createdAt: "desc" },

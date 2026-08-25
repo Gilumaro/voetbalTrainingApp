@@ -6,17 +6,39 @@ export type DiagramAid = {
   label?: string | null;
 };
 
+export type DiagramAction = {
+  kind: string; // ActionKind value (PASS | RUN | DRIBBLE | SHOT | CARRY)
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  label?: string | null;
+};
+
 const GOAL_WIDTH_M: Record<string, number> = { BIG_GOAL: 7, SMALL_GOAL: 3 };
 
+// Line colour/style per action kind. Drawn in pixel space.
+const ACTION_STYLE: Record<
+  string,
+  { color: string; width: number; dash?: string; wavy?: boolean; double?: boolean }
+> = {
+  PASS: { color: "#0f172a", width: 2 },
+  RUN: { color: "#0f172a", width: 2, dash: "6 4" },
+  DRIBBLE: { color: "#0f172a", width: 2, wavy: true },
+  CARRY: { color: "#0f172a", width: 2, double: true },
+  SHOT: { color: "#dc2626", width: 2.6 },
+};
+
 /**
- * Top-down SVG diagram of a single drill's footprint with its aids placed on it.
- * Pure/presentational so it renders both server-side (list, print) and inside the
- * client editor's live preview.
+ * Top-down SVG diagram of a single drill's footprint with its aids placed on it and
+ * its actions drawn as arrows (pass/run/dribble/shot). Pure/presentational so it
+ * renders server-side (list, print) and inside the client editor's live preview.
  */
 export default function PitchDiagram({
   footprintX,
   footprintY,
   aids,
+  actions = [],
   scale = 6,
   className,
   label,
@@ -24,6 +46,7 @@ export default function PitchDiagram({
   footprintX: number;
   footprintY: number;
   aids: DiagramAid[];
+  actions?: DiagramAction[];
   scale?: number;
   className?: string;
   label?: string;
@@ -63,7 +86,18 @@ export default function PitchDiagram({
         strokeOpacity={0.3}
         strokeDasharray="5 5"
       />
-      {aids.map((a, i) => (
+      {/* Actions drawn under the glyphs so cones/players sit on top of the lines. */}
+      {actions.map((a, i) => (
+        <ActionArrow
+          key={`act-${i}`}
+          action={a}
+          x1={mx(a.fromX)}
+          y1={my(a.fromY)}
+          x2={mx(a.toX)}
+          y2={my(a.toY)}
+        />
+      ))}
+      {orderAids(aids).map(({ aid: a, i }) => (
         <AidGlyph
           key={i}
           aid={a}
@@ -76,6 +110,146 @@ export default function PitchDiagram({
       ))}
     </svg>
   );
+}
+
+// Draw non-player aids first, then players, so player letters stay on top of cones.
+export function orderAids(aids: DiagramAid[]): { aid: DiagramAid; i: number }[] {
+  const indexed = aids.map((aid, i) => ({ aid, i }));
+  const players = indexed.filter((x) => isPlayerAid(x.aid.type));
+  const rest = indexed.filter((x) => !isPlayerAid(x.aid.type));
+  return [...rest, ...players];
+}
+
+export function isPlayerAid(type: string): boolean {
+  return type === "PLAYER" || type === "PLAYER_OPP";
+}
+
+/**
+ * Draw one action as a line (styled per kind) with a computed arrowhead. Arrowheads
+ * are drawn as polygons (not SVG markers) so multiple diagrams on one page never
+ * collide on marker ids, and it works in server rendering.
+ */
+export function ActionArrow({
+  action,
+  x1,
+  y1,
+  x2,
+  y2,
+}: {
+  action: DiagramAction;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}) {
+  const style = ACTION_STYLE[action.kind] ?? ACTION_STYLE.PASS;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  // Stop the line just short of the tip so the arrowhead reads cleanly.
+  const head = 8;
+  const ex = x2 - ux * head * 0.7;
+  const ey = y2 - uy * head * 0.7;
+
+  // Arrowhead polygon.
+  const px = -uy; // perpendicular
+  const py = ux;
+  const hw = head * 0.5;
+  const head1x = x2 - ux * head + px * hw;
+  const head1y = y2 - uy * head + py * hw;
+  const head2x = x2 - ux * head - px * hw;
+  const head2y = y2 - uy * head - py * hw;
+
+  const midLabel = action.label
+    ? { x: (x1 + x2) / 2 + px * 8, y: (y1 + y2) / 2 + py * 8 }
+    : null;
+
+  return (
+    <g>
+      {style.wavy ? (
+        <path
+          d={wavyPath(x1, y1, ex, ey)}
+          fill="none"
+          stroke={style.color}
+          strokeWidth={style.width}
+        />
+      ) : style.double ? (
+        <>
+          <line
+            x1={x1 + px * 1.6}
+            y1={y1 + py * 1.6}
+            x2={ex + px * 1.6}
+            y2={ey + py * 1.6}
+            stroke={style.color}
+            strokeWidth={style.width}
+          />
+          <line
+            x1={x1 - px * 1.6}
+            y1={y1 - py * 1.6}
+            x2={ex - px * 1.6}
+            y2={ey - py * 1.6}
+            stroke={style.color}
+            strokeWidth={style.width}
+          />
+        </>
+      ) : (
+        <line
+          x1={x1}
+          y1={y1}
+          x2={ex}
+          y2={ey}
+          stroke={style.color}
+          strokeWidth={style.width}
+          strokeDasharray={style.dash}
+        />
+      )}
+      <polygon
+        points={`${x2},${y2} ${head1x},${head1y} ${head2x},${head2y}`}
+        fill={style.color}
+      />
+      {midLabel && (
+        <text
+          x={midLabel.x}
+          y={midLabel.y}
+          fontSize={9}
+          fill={style.color}
+          textAnchor="middle"
+          dominantBaseline="middle"
+        >
+          {action.label}
+        </text>
+      )}
+    </g>
+  );
+}
+
+// Sine-wave path between two points (for dribble lines).
+function wavyPath(x1: number, y1: number, x2: number, y2: number): string {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const px = -uy;
+  const py = ux;
+  const amp = 3;
+  const wavelength = 9;
+  const n = Math.max(2, Math.round(len / wavelength));
+  let d = `M ${x1} ${y1}`;
+  for (let i = 1; i <= n; i++) {
+    const t = i / n;
+    const bx = x1 + dx * t;
+    const by = y1 + dy * t;
+    const off = amp * (i % 2 === 0 ? 1 : -1);
+    // Quadratic control point offset perpendicular to the line.
+    const cxT = (i - 0.5) / n;
+    const cx = x1 + dx * cxT + px * off;
+    const cy = y1 + dy * cxT + py * off;
+    d += ` Q ${cx} ${cy} ${bx} ${by}`;
+  }
+  return d;
 }
 
 export function AidGlyph({
@@ -134,7 +308,27 @@ export function AidGlyph({
         />
       );
     case "PLAYER":
-      return <circle cx={cx} cy={cy} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} />;
+    case "PLAYER_OPP": {
+      const fill = aid.type === "PLAYER_OPP" ? "#ea580c" : "#2563eb";
+      return (
+        <g>
+          <circle cx={cx} cy={cy} r={6.5} fill={fill} stroke="#ffffff" strokeWidth={1.5} />
+          {aid.label && (
+            <text
+              x={cx}
+              y={cy}
+              fontSize={8}
+              fontWeight={700}
+              fill="#ffffff"
+              textAnchor="middle"
+              dominantBaseline="central"
+            >
+              {aid.label}
+            </text>
+          )}
+        </g>
+      );
+    }
     case "BALL":
       return <circle cx={cx} cy={cy} r={4} fill="#ffffff" stroke="#0f172a" strokeWidth={1.5} />;
     case "MARKER":

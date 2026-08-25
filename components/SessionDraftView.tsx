@@ -3,8 +3,29 @@ import PitchDiagram from "./PitchDiagram";
 import CombinedPitchDiagram from "./CombinedPitchDiagram";
 import MaterialsList from "./MaterialsList";
 import { mergeTallies, stationTally, maxTally, type MaterialTally } from "@/lib/materials";
+import { drillSteps } from "@/lib/drills";
 import { AGE_GOAL, THEME_LABELS, type AgeCategory, type Theme } from "@/lib/enums";
-import type { BlockDraft, SessionDraft, StationDraft } from "@/lib/generator";
+import {
+  groupBlocksForDisplay,
+  rotationSchedule,
+  type BlockDraft,
+  type DisplayGroup,
+  type SessionDraft,
+  type StationDraft,
+} from "@/lib/generator";
+
+const sideLabel = (side?: string) => (side === "LEFT" ? "links" : side === "RIGHT" ? "rechts" : "");
+
+function StepsList({ steps }: { steps: string[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-sm text-zinc-700">
+      {steps.map((s, i) => (
+        <li key={i}>{s}</li>
+      ))}
+    </ol>
+  );
+}
 
 export default function SessionDraftView({
   draft,
@@ -48,9 +69,13 @@ export default function SessionDraftView({
       )}
 
       <ol className="space-y-4">
-        {draft.blocks.map((block, i) => (
+        {groupBlocksForDisplay(draft.blocks).map((g, i) => (
           <li key={i}>
-            <BlockCard block={block} index={i} availX={availX} availY={availY} />
+            {g.kind === "rotation" ? (
+              <RotationCard group={g} availX={availX} availY={availY} />
+            ) : (
+              <BlockCard block={g.block} index={g.index} availX={availX} availY={availY} />
+            )}
           </li>
         ))}
       </ol>
@@ -99,19 +124,104 @@ function BlockCard({
   );
 }
 
+function RotationCard({
+  group,
+  availX,
+  availY,
+}: {
+  group: Extract<DisplayGroup, { kind: "rotation" }>;
+  availX: number;
+  availY: number;
+}) {
+  const { blocks, startIndex, endIndex } = group;
+  const first = blocks[0];
+  const left = first.stations.find((s) => s.side === "LEFT") ?? first.stations[0];
+  const right = first.stations.find((s) => s.side === "RIGHT") ?? first.stations[1];
+  const totalMin = blocks.reduce((sum, b) => sum + b.durationMin, 0);
+  // Materials are the same for every rotation stop (same two stations); size once.
+  const tally = mergeTallies(...first.stations.map((s) => stationTally(s.drill, s.players)));
+  const schedule = rotationSchedule(blocks);
+
+  return (
+    <div className="avoid-break rounded-xl border border-zinc-200 bg-white p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h3 className="font-semibold text-zinc-900">
+          <span className="mr-2 inline-grid h-6 place-items-center rounded-full bg-zinc-800 px-2 text-xs text-white">
+            {startIndex + 1}–{endIndex + 1}
+          </span>
+          Parallelle stations
+          <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+            groepen wisselen
+          </span>
+        </h3>
+        <span className="text-sm font-medium text-zinc-500">{totalMin} min</span>
+      </div>
+      <p className="mb-3 text-xs text-zinc-500">
+        Zet beide stations één keer op; de groepen doen ze allebei en wisselen na de helft van de tijd.
+      </p>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="rounded-lg border border-zinc-200 p-2">
+          <CombinedPitchDiagram
+            availX={availX}
+            availY={availY}
+            left={left && { footprintX: left.drill.footprintX, footprintY: left.drill.footprintY, aids: left.drill.aids, actions: left.drill.actions }}
+            right={right && { footprintX: right.drill.footprintX, footprintY: right.drill.footprintY, aids: right.drill.aids, actions: right.drill.actions }}
+            scale={6}
+            className="w-full"
+          />
+          <div className="mt-1 flex justify-between px-2 text-xs text-zinc-500">
+            <span>◀ links</span>
+            <span>rechts ▶</span>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {/* Rotation schedule: what each group does, and when. */}
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Rotatie</p>
+            <ul className="mt-1 space-y-1 text-sm text-zinc-700">
+              {schedule.map((row) => (
+                <li key={row.group}>
+                  <span className="font-semibold">Groep {row.group}:</span>{" "}
+                  {row.stops.map((s, i) => (
+                    <span key={i}>
+                      {i > 0 && <span className="text-zinc-400"> → </span>}
+                      {sideLabel(s.side)} · {s.drillTitle} ({s.durationMin} min)
+                    </span>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {left && <StationDetail station={left} tint="blue" byGroup={false} />}
+          {right && <StationDetail station={right} tint="orange" byGroup={false} />}
+          <MaterialsList tally={tally} title="Materiaal (beide stations)" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WholeBlock({ station, tally }: { station: StationDraft; tally: MaterialTally }) {
   const d = station.drill;
   return (
     <div className="grid gap-4 sm:grid-cols-[220px_1fr]">
       <div className="space-y-3">
         <div className="rounded-lg border border-zinc-200 p-2">
-          <PitchDiagram footprintX={d.footprintX} footprintY={d.footprintY} aids={d.aids} scale={5} className="w-full" />
+          <PitchDiagram footprintX={d.footprintX} footprintY={d.footprintY} aids={d.aids} actions={d.actions} scale={5} className="w-full" />
         </div>
         <MaterialsList tally={tally} />
       </div>
       <div>
         <StationHeader station={station} />
+        {d.setup && (
+          <p className="mt-2 text-sm text-zinc-600"><strong>Opstelling:</strong> {d.setup}</p>
+        )}
+        <StepsList steps={drillSteps(d.steps)} />
         <p className="mt-2 whitespace-pre-line text-sm text-zinc-700">{d.description}</p>
+        {d.rules && (
+          <p className="mt-2 text-sm text-zinc-600"><strong>Spelregels:</strong> {d.rules}</p>
+        )}
         {d.coachingPoints && (
           <p className="mt-2 text-sm text-zinc-600"><strong>Coachpunten:</strong> {d.coachingPoints}</p>
         )}
@@ -140,8 +250,8 @@ function SplitBlock({
         <CombinedPitchDiagram
           availX={availX}
           availY={availY}
-          left={left && { footprintX: left.drill.footprintX, footprintY: left.drill.footprintY, aids: left.drill.aids }}
-          right={right && { footprintX: right.drill.footprintX, footprintY: right.drill.footprintY, aids: right.drill.aids }}
+          left={left && { footprintX: left.drill.footprintX, footprintY: left.drill.footprintY, aids: left.drill.aids, actions: left.drill.actions }}
+          right={right && { footprintX: right.drill.footprintX, footprintY: right.drill.footprintY, aids: right.drill.aids, actions: right.drill.actions }}
           scale={6}
           className="w-full"
         />
@@ -159,20 +269,32 @@ function SplitBlock({
   );
 }
 
-function StationDetail({ station, tint }: { station: StationDraft; tint: "blue" | "orange" }) {
+function StationDetail({
+  station,
+  tint,
+  byGroup = true,
+}: {
+  station: StationDraft;
+  tint: "blue" | "orange";
+  byGroup?: boolean;
+}) {
   const dot = tint === "blue" ? "bg-blue-500" : "bg-orange-500";
   const d = station.drill;
   return (
     <div className="rounded-lg border border-zinc-200 p-3">
       <div className="flex items-center gap-2">
         <span className={`h-3 w-3 rounded-full ${dot}`} />
-        <span className="text-sm font-semibold text-zinc-900">Groep {station.group}</span>
-        <span className="text-xs text-zinc-500">· {station.players} spelers</span>
+        <span className="text-sm font-semibold text-zinc-900">
+          {byGroup ? `Groep ${station.group}` : `Station ${sideLabel(station.side)}`}
+        </span>
+        {byGroup && <span className="text-xs text-zinc-500">· {station.players} spelers</span>}
       </div>
       <Link href={`/bibliotheek/${d.id}`} className="mt-1 block text-sm font-medium text-emerald-700 hover:underline">
         {d.title}
       </Link>
       <p className="mt-1 text-xs text-zinc-600">{d.footprintX}×{d.footprintY} m</p>
+      {d.setup && <p className="mt-1 text-xs text-zinc-600"><strong>Opstelling:</strong> {d.setup}</p>}
+      <StepsList steps={drillSteps(d.steps)} />
     </div>
   );
 }

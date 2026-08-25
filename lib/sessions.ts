@@ -19,7 +19,9 @@ export async function getSession(id: number) {
         include: {
           stations: {
             orderBy: { order: "asc" },
-            include: { drill: { include: { aids: true } } },
+            include: {
+              drill: { include: { aids: true, actions: { orderBy: { order: "asc" } } } },
+            },
           },
         },
       },

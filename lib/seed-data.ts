@@ -1,4 +1,4 @@
-import type { AidType, BallScaling, DrillType, FieldType, Theme } from "./enums";
+import type { ActionKind, AidType, BallScaling, DrillType, FieldType, Theme } from "./enums";
 
 export type SeedAid = {
   type: AidType;
@@ -8,10 +8,21 @@ export type SeedAid = {
   label?: string;
 };
 
+export type SeedAction = {
+  kind: ActionKind;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  order?: number;
+  label?: string;
+};
+
 export type SeedDrill = {
   title: string;
   type: DrillType;
   theme: Theme;
+  subTheme?: string;
   ageMin: number;
   ageMax: number;
   fieldType: FieldType;
@@ -23,11 +34,15 @@ export type SeedDrill = {
   durationMin: number;
   ballScaling?: BallScaling;
   description: string;
+  setup?: string;
+  steps?: string[];
+  rules?: string;
   coachingPoints?: string;
   progressions?: string;
   simplifications?: string;
   videoUrl?: string;
   aids: SeedAid[];
+  actions?: SeedAction[];
 };
 
 // Corner disc-cones for a WxL rectangle.
@@ -40,46 +55,313 @@ function box(w: number, l: number): SeedAid[] {
   ];
 }
 
-// Compact factory for the drills below (age U15-friendly by default).
-function ex(
-  type: DrillType,
-  theme: Theme,
-  title: string,
-  footprintX: number,
-  footprintY: number,
-  minPlayers: number,
-  idealPlayers: number,
-  maxPlayers: number,
-  durationMin: number,
-  description: string,
-  coachingPoints: string,
-  aids: SeedAid[],
-  ballScaling: BallScaling = "FIXED",
-): SeedDrill {
-  return {
-    title,
-    type,
-    theme,
-    ageMin: 13,
-    ageMax: 18,
-    fieldType: footprintX >= 44 ? "HALF" : "QUARTER",
-    footprintX,
-    footprintY,
-    minPlayers,
-    idealPlayers,
-    maxPlayers,
-    durationMin,
-    ballScaling,
-    description,
-    coachingPoints,
-    aids,
-  };
+// ---- Figure & action constructors (keep aids/actions readable & non-overlapping) ---
+type Pt = [number, number];
+const P = (x: number, y: number, label?: string): SeedAid => ({ type: "PLAYER", x, y, ...(label ? { label } : {}) });
+const O = (x: number, y: number, label?: string): SeedAid => ({ type: "PLAYER_OPP", x, y, ...(label ? { label } : {}) });
+const disc = (x: number, y: number): SeedAid => ({ type: "DISC_CONE", x, y });
+const cone = (x: number, y: number): SeedAid => ({ type: "CONE", x, y });
+const ball = (x: number, y: number): SeedAid => ({ type: "BALL", x, y });
+const bigGoal = (x: number, y: number, label = "doel + keeper"): SeedAid => ({ type: "BIG_GOAL", x, y, label });
+const smallGoal = (x: number, y: number, label?: string): SeedAid => ({ type: "SMALL_GOAL", x, y, ...(label ? { label } : {}) });
+
+// A queue of n players from (x,y), each `gap` further along `dir`. First gets `label`.
+function queue(x: number, y: number, n: number, label?: string, dir: Pt = [0, 2]): SeedAid[] {
+  return Array.from({ length: n }, (_, i) => P(x + i * dir[0], y + i * dir[1], i === 0 ? label : undefined));
 }
+// n players evenly spread across width `w`, centred on cx at height y (color P=own, O=opponent).
+function rowP(cx: number, y: number, n: number, w: number, color: "P" | "O" = "P"): SeedAid[] {
+  const f = color === "P" ? P : O;
+  if (n <= 1) return [f(cx, y)];
+  const step = w / (n - 1);
+  return Array.from({ length: n }, (_, i) => f(cx - w / 2 + i * step, y));
+}
+
+// Approx diagram radius (m) per figure, used to detect/resolve overlaps.
+function figRadius(t: string): number {
+  if (t === "PLAYER" || t === "PLAYER_OPP") return 0.93;
+  if (t.includes("GOAL")) return 0;
+  return 0.57; // cones, balls
+}
+// How "fixed" a figure is: higher stays put, lower gets nudged away on overlap.
+function figPriority(a: SeedAid): number {
+  if (a.type.includes("GOAL")) return 5;
+  if ((a.type === "PLAYER" || a.type === "PLAYER_OPP") && a.label) return 4;
+  if (a.type === "PLAYER" || a.type === "PLAYER_OPP") return 3;
+  if (a.type === "DISC_CONE" || a.type === "CONE") return 2;
+  return 1; // ball
+}
+/**
+ * Nudge any two figures that sit on top of each other just far enough apart (a few
+ * relaxation passes). Balls/cones move before players, and labelled players last, so
+ * the drawn positions stay meaningful and action arrows (which point at players) still
+ * line up. Goals are anchors and never move.
+ */
+function declutter(aids: SeedAid[], fx: number, fy: number): SeedAid[] {
+  const arr = aids.map((a) => ({ ...a }));
+  const clamp = (v: number, hi: number) => Math.max(0.3, Math.min(hi - 0.3, v));
+  for (let pass = 0; pass < 10; pass++) {
+    let moved = false;
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) {
+        const a = arr[i], b = arr[j];
+        if (a.type.includes("GOAL") || b.type.includes("GOAL")) continue;
+        const min = figRadius(a.type) + figRadius(b.type) + 0.1;
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist >= min) continue;
+        if (dist < 1e-6) { dx = 0.12; dy = 0.09; dist = Math.hypot(dx, dy); }
+        const push = min - dist;
+        const ux = dx / dist, uy = dy / dist;
+        if (figPriority(b) <= figPriority(a)) {
+          b.x = clamp(b.x + ux * push, fx); b.y = clamp(b.y + uy * push, fy);
+        } else {
+          a.x = clamp(a.x - ux * push, fx); a.y = clamp(a.y - uy * push, fy);
+        }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return arr;
+}
+
+const pass = (f: Pt, t: Pt, label?: string): SeedAction => ({ kind: "PASS", fromX: f[0], fromY: f[1], toX: t[0], toY: t[1], ...(label ? { label } : {}) });
+const run = (f: Pt, t: Pt, label?: string): SeedAction => ({ kind: "RUN", fromX: f[0], fromY: f[1], toX: t[0], toY: t[1], ...(label ? { label } : {}) });
+const dribble = (f: Pt, t: Pt, label?: string): SeedAction => ({ kind: "DRIBBLE", fromX: f[0], fromY: f[1], toX: t[0], toY: t[1], ...(label ? { label } : {}) });
+const carry = (f: Pt, t: Pt, label?: string): SeedAction => ({ kind: "CARRY", fromX: f[0], fromY: f[1], toX: t[0], toY: t[1], ...(label ? { label } : {}) });
+const shot = (f: Pt, t: Pt, label?: string): SeedAction => ({ kind: "SHOT", fromX: f[0], fromY: f[1], toX: t[0], toY: t[1], ...(label ? { label } : {}) });
 
 // NOTE: this starter set is intentionally small (P1). It is expanded toward ~100
 // U15 drills in P6. Every theme has >= 2 EXERCISE drills so a split block (two
 // same-theme stations, groups rotating) can always be filled.
-export const SEED_DRILLS: SeedDrill[] = [
+const RAW_SEED_DRILLS: SeedDrill[] = [
+  // ==== EXEMPLAR DRILLS (gold-standard: setup + numbered steps + arrows) =====
+  // These set the quality bar for the whole library: concrete instructions the
+  // coach can read out, lettered players, and pass/run/dribble/shot arrows.
+  {
+    title: "Passruit — pass en volg",
+    type: "WARMUP",
+    theme: "NEUTRAL",
+    ageMin: 12,
+    ageMax: 18,
+    fieldType: "QUARTER",
+    footprintX: 18,
+    footprintY: 18,
+    minPlayers: 8,
+    idealPlayers: 12,
+    maxPlayers: 16,
+    durationMin: 10,
+    ballScaling: "FIXED",
+    description:
+      "Klassieke passvorm in een ruit waarbij je je eigen pass volgt. Rustig starten, tempo opvoeren.",
+    setup:
+      "Zet een vierkant van 15×15 m met vier pylonen. Bij elke pylon staat minstens één speler; de rest sluit aan achter de pylon. Eén bal per ruit; bij 12+ spelers twee ruiten naast elkaar.",
+    steps: [
+      "Speler A passt strak over de grond naar speler B.",
+      "Direct na de pass loopt A rustig achter de bal aan naar de pylon van B.",
+      "B neemt aan met de binnenkant, passt naar C en volgt zijn eigen pass naar C.",
+      "Zo gaat het met de klok mee door: passen, dan zelf doorschuiven.",
+      "Na 3 minuten de andere kant op (tegen de klok in) en met andere voet.",
+    ],
+    rules: "Maximaal 2× raken: aannemen en passen.",
+    coachingPoints:
+      "Speel op de goede voet (verste van de tegenstander), pass strak en over de grond, geef aan met je hand of stem.",
+    progressions: "Eén keer raken (direct); voeg een tweede bal toe.",
+    simplifications: "Maak de ruit groter en sta 3× raken toe.",
+    aids: [
+      // Positie A (linksboven) met wachtrij
+      { type: "CONE", x: 2, y: 2 },
+      { type: "PLAYER", x: 3.8, y: 2, label: "A" },
+      { type: "PLAYER", x: 2, y: 4 },
+      { type: "PLAYER", x: 2, y: 6 },
+      // Positie B (rechtsboven)
+      { type: "CONE", x: 16, y: 2 },
+      { type: "PLAYER", x: 14.2, y: 2, label: "B" },
+      { type: "PLAYER", x: 16, y: 4 },
+      { type: "PLAYER", x: 16, y: 6 },
+      // Positie C (rechtsonder)
+      { type: "CONE", x: 16, y: 16 },
+      { type: "PLAYER", x: 14.2, y: 16, label: "C" },
+      { type: "PLAYER", x: 16, y: 14 },
+      { type: "PLAYER", x: 16, y: 12 },
+      // Positie D (linksonder)
+      { type: "CONE", x: 2, y: 16 },
+      { type: "PLAYER", x: 3.8, y: 16, label: "D" },
+      { type: "PLAYER", x: 2, y: 14 },
+      { type: "PLAYER", x: 2, y: 12 },
+      { type: "BALL", x: 5.6, y: 2 },
+    ],
+    actions: [
+      { kind: "PASS", fromX: 4.6, fromY: 2, toX: 13.4, toY: 2, label: "pass" },
+      { kind: "RUN", fromX: 3.8, fromY: 3.2, toX: 13.4, toY: 3.2, label: "volg je pass" },
+    ],
+  },
+  {
+    title: "Afwerken via de 1-2",
+    type: "EXERCISE",
+    theme: "ATTACK",
+    ageMin: 13,
+    ageMax: 18,
+    fieldType: "QUARTER",
+    footprintX: 22,
+    footprintY: 30,
+    minPlayers: 6,
+    idealPlayers: 8,
+    maxPlayers: 10,
+    durationMin: 15,
+    ballScaling: "FIXED",
+    description:
+      "Combinatie via een 1-2 met een dieptepass en afronden op doel. De hele groep schuift steeds een positie door.",
+    setup:
+      "Groot doel met keeper aan de korte zijde. Zet met schijfhoedjes vier posities uit: A centraal onderin (met de ballen), B links, C linksvoor, D rechts. Leg de ballen bij A; de overige spelers wachten in een rij achter positie A.",
+    steps: [
+      "Speler A passt in op speler B.",
+      "Speler B kaatst de bal (1-2) met speler C.",
+      "Speler C legt de bal in één keer terug in de loop van B.",
+      "Speler B speelt een dieptepass op speler D.",
+      "Speler D neemt de bal mee naar binnen en werkt af op doel.",
+      "Doorschuiven: A→B, B→C, C→D, D sluit achteraan bij A. Ook vanaf de rechterkant starten.",
+    ],
+    rules: "B en C spelen in één keer (direct). D mag 2× raken vóór het schot.",
+    coachingPoints:
+      "Hoofd omhoog om te kijken waar de bal naartoe moet; pas de balsnelheid aan; timing van de dieptepass op de loop, niet in de voeten.",
+    progressions: "Voeg een passieve verdediger bij D toe; afronden in maximaal 2 contacten.",
+    simplifications: "Speel de dieptepass in de voeten in plaats van in de loop.",
+    aids: [
+      { type: "BIG_GOAL", x: 11, y: 1.2 },
+      { type: "PLAYER", x: 11, y: 3.4, label: "K" },
+      // Positie A met wachtrij (ideaal 8 spelers)
+      { type: "PLAYER", x: 10, y: 22, label: "A" },
+      { type: "PLAYER", x: 10, y: 24 },
+      { type: "PLAYER", x: 10, y: 26 },
+      { type: "PLAYER", x: 10, y: 28 },
+      { type: "DISC_CONE", x: 12.5, y: 22 },
+      { type: "PLAYER", x: 6, y: 18, label: "B" },
+      { type: "DISC_CONE", x: 4, y: 18 },
+      { type: "PLAYER", x: 6, y: 11, label: "C" },
+      { type: "DISC_CONE", x: 4, y: 11 },
+      { type: "PLAYER", x: 17.5, y: 16, label: "D" },
+      { type: "DISC_CONE", x: 19.5, y: 16 },
+      { type: "BALL", x: 11.6, y: 20.4 },
+    ],
+    actions: [
+      { kind: "PASS", fromX: 10, fromY: 22, toX: 6, toY: 18, label: "1" },
+      { kind: "PASS", fromX: 6.5, fromY: 18, toX: 6.5, toY: 11, label: "2" },
+      { kind: "PASS", fromX: 5.5, fromY: 11, toX: 5.5, toY: 18, label: "3" },
+      { kind: "PASS", fromX: 6, fromY: 18, toX: 17, toY: 16, label: "4 diep" },
+      { kind: "CARRY", fromX: 17.5, fromY: 15, toX: 13, toY: 8, label: "meenemen" },
+      { kind: "SHOT", fromX: 13, fromY: 8, toX: 11, toY: 3.6, label: "schot" },
+    ],
+  },
+  {
+    title: "Dieptepass en voorzet afronden",
+    type: "EXERCISE",
+    theme: "ATTACK",
+    ageMin: 13,
+    ageMax: 18,
+    fieldType: "QUARTER",
+    footprintX: 22,
+    footprintY: 30,
+    minPlayers: 6,
+    idealPlayers: 8,
+    maxPlayers: 10,
+    durationMin: 15,
+    ballScaling: "FIXED",
+    description:
+      "Opbouw via de vleugel met een voorzet die door de inkomende spelers wordt afgerond.",
+    setup:
+      "Groot doel met keeper. A start centraal met de bal, B is de vleugelspeler rechts, C komt vanuit het midden inlopen. Schijfhoedjes markeren de startposities; de overige spelers wachten in een rij achter positie A.",
+    steps: [
+      "Speler A speelt een dieptepass op vleugelspeler B.",
+      "Speler B neemt mee tot de achterlijn en geeft een lage voorzet.",
+      "Speler C timet zijn loop en rondt de voorzet in één keer af.",
+      "A sluit aan als tweede inkomende speler op de tweede paal.",
+      "Doorschuiven: A→B→C→achteraan. Wissel na 4 minuten van vleugel.",
+    ],
+    rules: "Voorzet laag en hard; afronden in één contact.",
+    coachingPoints:
+      "Timing van de inloop: kom van achteren, niet te vroeg. Voorzet vóór de keeper, achter de laatste verdediger.",
+    progressions: "Voeg een tweede afmaker toe op de tweede paal.",
+    simplifications: "Sta een controle toe vóór het afronden; hogere, langzamere voorzet.",
+    aids: [
+      { type: "BIG_GOAL", x: 11, y: 1.2 },
+      { type: "PLAYER", x: 11, y: 3.4, label: "K" },
+      // Positie A met wachtrij (ideaal 8 spelers)
+      { type: "PLAYER", x: 8, y: 23, label: "A" },
+      { type: "PLAYER", x: 8, y: 25 },
+      { type: "PLAYER", x: 8, y: 27 },
+      { type: "PLAYER", x: 8, y: 29 },
+      { type: "DISC_CONE", x: 10, y: 23 },
+      { type: "PLAYER", x: 18, y: 18, label: "B" },
+      { type: "DISC_CONE", x: 20, y: 18 },
+      { type: "PLAYER", x: 10, y: 13, label: "C" },
+      { type: "PLAYER", x: 10, y: 15 },
+      { type: "DISC_CONE", x: 11.7, y: 13 },
+      { type: "BALL", x: 9, y: 21 },
+    ],
+    actions: [
+      { kind: "PASS", fromX: 8, fromY: 23, toX: 18, toY: 18, label: "1 diep" },
+      { kind: "CARRY", fromX: 18, fromY: 17.5, toX: 18, toY: 7, label: "meenemen" },
+      { kind: "PASS", fromX: 18, fromY: 6.5, toX: 11, toY: 6, label: "voorzet" },
+      { kind: "RUN", fromX: 10, fromY: 13, toX: 11, toY: 6.5, label: "inloop" },
+      { kind: "SHOT", fromX: 11, fromY: 5.5, toX: 11, toY: 3.6, label: "afronden" },
+    ],
+  },
+  {
+    title: "Partij 6-6 met accent op diepte",
+    type: "MATCHFORM",
+    theme: "ATTACK",
+    ageMin: 13,
+    ageMax: 18,
+    fieldType: "HALF",
+    footprintX: 44,
+    footprintY: 30,
+    minPlayers: 10,
+    idealPlayers: 12,
+    maxPlayers: 16,
+    durationMin: 20,
+    ballScaling: "FIXED",
+    description:
+      "Positiespel richting twee grote doelen met keepers, met de opdracht om zo snel mogelijk de diepte te zoeken.",
+    setup:
+      "Half veld met aan beide korte zijden een groot doel en een keeper. Verdeel in twee teams met hesjes. Leg reserveballen bij beide doelen zodat het spel snel doorgaat.",
+    steps: [
+      "Vrije partij 6 tegen 6 op de twee grote doelen.",
+      "Bij balbezit: probeer binnen drie passes een speler diep aan te spelen.",
+      "Een doelpunt na een dieptepass telt dubbel.",
+      "Bij balverlies schakelt het hele team direct om en zet druk op de bal.",
+    ],
+    rules: "Doelpunt na een dieptepass = 2 punten. Buitenspel geldt niet.",
+    coachingPoints:
+      "Kijk vóór je aanneemt of de diepte openligt; blijf speelbaar door hoekjes te maken; snel omschakelen bij balverlies.",
+    progressions: "Maximaal 3× raken in eigen helft.",
+    simplifications: "Vrij aantal keren raken; groter veld voor meer ruimte.",
+    aids: [
+      // Blauw team (verdedigt boven, valt naar onderen aan) — 6 incl. keeper
+      { type: "BIG_GOAL", x: 22, y: 1.2 },
+      { type: "PLAYER", x: 22, y: 3.4, label: "K" },
+      { type: "PLAYER", x: 12, y: 8 },
+      { type: "PLAYER", x: 32, y: 8 },
+      { type: "PLAYER", x: 22, y: 12 },
+      { type: "PLAYER", x: 15, y: 16 },
+      { type: "PLAYER", x: 26, y: 21 },
+      // Oranje team — 6 incl. keeper
+      { type: "BIG_GOAL", x: 22, y: 28.8 },
+      { type: "PLAYER_OPP", x: 22, y: 26.6, label: "K" },
+      { type: "PLAYER_OPP", x: 12, y: 22 },
+      { type: "PLAYER_OPP", x: 32, y: 22 },
+      { type: "PLAYER_OPP", x: 22, y: 20 },
+      { type: "PLAYER_OPP", x: 16, y: 24 },
+      { type: "PLAYER_OPP", x: 30, y: 17 },
+      { type: "BALL", x: 23.4, y: 10.8 },
+    ],
+    actions: [
+      { kind: "PASS", fromX: 22, fromY: 12, toX: 15, toY: 16, label: "1" },
+      { kind: "PASS", fromX: 15, fromY: 16, toX: 26, toY: 20.5, label: "2 diep" },
+    ],
+  },
+
   // ---- Warming-ups ---------------------------------------------------------
   {
     title: "Passen en bewegen in het vierkant",
@@ -95,12 +377,33 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 16,
     durationMin: 12,
     description:
-      "Spelers passen in een vierkant en bewegen na de pass mee naar een nieuwe positie. Twee ballen tegelijk om het tempo hoog te houden.",
+      "Spelers passen in een vierkant en bewegen na de pass mee. Twee ballen tegelijk om het tempo hoog te houden.",
+    setup:
+      "Vierkant van 18×18 m met pylonen op de hoeken. Verdeel de spelers over de vier zijden. Twee ballen in het spel, diagonaal van elkaar.",
+    steps: [
+      "Speler met bal passt naar een vrije speler op een andere zijde.",
+      "Na de pass loopt de passer mee naar een vrije plek (niet stilstaan).",
+      "De ontvanger neemt aan met de juiste voet en speelt door.",
+      "Houd beide ballen tegelijk in beweging; kijk op vóór je passt.",
+    ],
+    rules: "Maximaal 3× raken; na 4 minuten alleen nog 2× raken.",
     coachingPoints:
       "Aanspeelbaar staan, inspeelmoment kiezen, pass met de juiste snelheid en op de goede voet.",
     progressions: "Beperk tot één of twee keer raken; voeg een derde bal toe.",
     simplifications: "Werk met één bal en een groter vierkant.",
-    aids: [...box(20, 20), { type: "BALL", x: 6, y: 10 }, { type: "BALL", x: 14, y: 10 }],
+    aids: [
+      ...box(20, 20),
+      // Spelers verdeeld over de vier zijden (12 totaal)
+      P(6, 1.5), P(10, 1.5), P(14, 1.5),
+      P(6, 18.5), P(10, 18.5), P(14, 18.5),
+      P(1.5, 6), P(1.5, 10), P(1.5, 14),
+      P(18.5, 6), P(18.5, 10), P(18.5, 14),
+      ball(8, 1.5), ball(12, 18.5),
+    ],
+    actions: [
+      pass([8, 2], [18, 9], "pass"),
+      run([10, 2.5], [17.5, 9.5], "beweeg mee"),
+    ],
   },
   {
     title: "Tikspel met bal — iedereen aan de bal",
@@ -117,11 +420,40 @@ export const SEED_DRILLS: SeedDrill[] = [
     durationMin: 10,
     ballScaling: "PER_PLAYER",
     description:
-      "Iedereen dribbelt met een bal in het vak. Twee tikkers (met hesje) proberen af te tikken; afgetikte spelers doen een taak en gaan verder.",
+      "Iedereen dribbelt met een bal in het vak. Twee tikkers (met hesje) proberen af te tikken.",
+    setup:
+      "Vak van 23×23 m met pylonen op de hoeken. Iedereen een bal, behalve de twee tikkers (hesje). Afgetikte spelers doen 5 jongleer-tikjes en gaan weer verder.",
+    steps: [
+      "Alle spelers dribbelen vrij door het vak, bal dicht aan de voet.",
+      "De twee tikkers (zonder bal) proberen een dribbelaar aan te tikken.",
+      "Ben je getikt? Doe je taak (5 tikjes) en speel weer mee.",
+      "Vol vak? Kap en draai weg uit de drukte, hoofd omhoog.",
+    ],
+    rules: "Tikkers mogen niet tegen ballen trappen; alleen met de hand tikken.",
     coachingPoints: "Bal dicht bij de voet, hoofd omhoog, kappen en draaien om ruimte te vinden.",
     progressions: "Verklein het vak of voeg een tikker toe.",
     simplifications: "Vergroot het vak of tik zonder bal.",
-    aids: [...box(25, 25)],
+    aids: [
+      ...box(25, 25),
+      // 2 tikkers (oranje) + 12 dribbelaars met bal
+      O(12, 12, "T"), O(6, 18, "T"),
+      P(5, 5), ball(6.2, 5),
+      P(12, 5), ball(13.2, 5),
+      P(19, 5), ball(20.2, 5),
+      P(19, 12), ball(20.2, 12),
+      P(19, 19), ball(20.2, 19),
+      P(12, 19), ball(13.2, 19),
+      P(5, 19), ball(6.2, 19),
+      P(5, 12), ball(6.2, 12),
+      P(9, 9), ball(10.2, 9),
+      P(16, 9), ball(17.2, 9),
+      P(16, 16), ball(17.2, 16),
+      P(9, 16), ball(10.2, 16),
+    ],
+    actions: [
+      dribble([9, 9], [11, 6], "dribbel"),
+      run([12, 12], [10.5, 8], "tik!"),
+    ],
   },
 
   // ---- Aanvallen (ATTACK) --------------------------------------------------
@@ -139,14 +471,30 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 8,
     durationMin: 15,
     description:
-      "Vier aanvallers houden de bal in balbezit tegen twee verdedigers. Na een X-aantal passes mag er op het kleine doel worden gescoord.",
+      "Vier baltbezitters houden de bal vast tegen twee verdedigers; na genoeg passes scoren op het kleine doel.",
+    setup:
+      "Vak 28×20 m met een klein doel aan de bovenkant. Vier aanvallers (blauw) rond het vak, één aanspeelpunt bij het doel, twee verdedigers (oranje) in het midden. Ballen bij de aanvallers.",
+    steps: [
+      "De vier aanvallers spelen de bal rond en zoeken steeds de vrije man.",
+      "De twee verdedigers proberen de bal te veroveren of aan te raken.",
+      "Na 6 passes op rij mag er ingespeeld worden op het aanspeelpunt bij het doel.",
+      "Het aanspeelpunt legt klaar of scoort in het kleine doel; daarna wisselen.",
+    ],
+    rules: "Aanvallers maximaal 2× raken. Bij balverlies wisselt de foutmaker met een verdediger.",
     coachingPoints: "Hoeken opzoeken, breedte en diepte geven, derde man aanspelen.",
     progressions: "Verhoog het aantal verdedigers naar drie.",
     simplifications: "Vergroot de ruimte of speel 4-tegen-1.",
     aids: [
-      ...box(28, 20),
-      { type: "SMALL_GOAL", x: 14, y: 0, label: "doel" },
-      { type: "BALL", x: 14, y: 14 },
+      smallGoal(14, 0, "doel"),
+      P(4, 14, "A"), P(24, 14, "B"), P(8, 6, "C"), P(20, 6, "D"),
+      P(14, 3, "E"),
+      O(12, 11, "1"), O(16, 9, "2"),
+      ball(5.5, 14),
+    ],
+    actions: [
+      pass([4, 14], [20, 6], "1"),
+      pass([20, 6], [14, 4], "2"),
+      shot([14, 3], [14, 0.6], "scoren"),
     ],
   },
   {
@@ -163,16 +511,36 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 9,
     durationMin: 18,
     description:
-      "In twee groepjes wordt via een vaste combinatie (pass-terug-diep) afgerond op het grote doel met keeper. Wissel van kant na elke poging.",
+      "Via een vaste combinatie (pass–terug–diep) afronden op het grote doel met keeper. Wissel van kant na elke poging.",
+    setup:
+      "Groot doel met keeper aan de bovenkant. Startpylon met de ballen onderin (A), een kaatser (B) centraal en een afmaker-startpunt rechts (C). Overige spelers wachten achter A.",
+    steps: [
+      "Speler A speelt in op kaatser B.",
+      "B kaatst de bal terug in de loop van A.",
+      "A speelt een dieptepass op C, die naar binnen komt.",
+      "C neemt mee en werkt af op doel; daarna doorschuiven A→B→C.",
+    ],
+    rules: "In één keer kaatsen (B), afronden in maximaal 2 contacten.",
     coachingPoints: "Timing van de inloop, scherpe passing, bewust afronden (plaatsen of hard).",
     progressions: "Voeg een passieve en daarna actieve verdediger toe.",
     simplifications: "Zonder verdediger, kortere afstand tot het doel.",
     aids: [
-      ...box(30, 25),
-      { type: "BIG_GOAL", x: 15, y: 0, label: "doel + keeper" },
-      { type: "CONE", x: 8, y: 16 },
-      { type: "CONE", x: 22, y: 16 },
-      { type: "BALL", x: 8, y: 18 },
+      bigGoal(15, 1.2),
+      P(15, 3.4, "K"),
+      ...queue(8, 19, 4, "A"),
+      disc(6.5, 19),
+      P(15, 13, "B"),
+      P(22, 17, "C"),
+      P(22, 20, "D"),
+      disc(23.5, 17),
+      ball(9.4, 18),
+    ],
+    actions: [
+      pass([8, 19], [15, 13], "1"),
+      pass([15, 13], [9, 18.5], "2 kaats"),
+      pass([9, 18], [22, 17], "3 diep"),
+      carry([22, 16.5], [17, 7], "meenemen"),
+      shot([17, 7], [15, 3.6], "schot"),
     ],
   },
 
@@ -191,15 +559,29 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 8,
     durationMin: 15,
     description:
-      "3-tegen-3 met twee steunpunten (jokers) op de zijkant. Het verdedigende team probeert druk te zetten en de bal te veroveren, en scoort daarna op één van de kleine doeltjes.",
+      "3-tegen-3 met twee steunpunten op de zijkant. Het verdedigende team zet druk, verovert de bal en scoort op een klein doeltje.",
+    setup:
+      "Vak 28×20 m met twee kleine doeltjes aan de bovenkant. Balbezittend team (blauw) met twee steunpunten langs de zijlijn, verdedigend team (oranje) in het midden.",
+    steps: [
+      "Blauw speelt de bal rond en gebruikt de steunpunten op de zijkant.",
+      "Oranje zet samen druk op de baldrager en knijpt de ruimte dicht.",
+      "Wint oranje de bal, dan schakelen ze om en scoren op een van de doeltjes.",
+      "Na balverovering of doelpunt wisselen de teams van rol.",
+    ],
+    rules: "Steunpunten spelen maximaal 2× raken en mogen niet zelf scoren.",
     coachingPoints: "Druk op de baldrager, kantelen, dekkingsschaduw, samen verdedigen.",
     progressions: "Steunpunten worden actief meespelend.",
     simplifications: "Geef het verdedigende team een extra speler.",
     aids: [
-      ...box(28, 20),
-      { type: "SMALL_GOAL", x: 6, y: 0 },
-      { type: "SMALL_GOAL", x: 22, y: 0 },
-      { type: "BALL", x: 14, y: 10 },
+      smallGoal(6, 0), smallGoal(22, 0),
+      P(8, 15, "A"), P(14, 17, "B"), P(20, 15, "C"),
+      P(1.5, 10, "S"), P(26.5, 10, "S"),
+      O(10, 9, "1"), O(14, 7, "2"), O(18, 9, "3"),
+      ball(15.4, 17),
+    ],
+    actions: [
+      pass([14, 17], [1.5, 11], "steunpunt"),
+      run([14, 7], [13, 13], "druk"),
     ],
   },
   {
@@ -216,15 +598,28 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 10,
     durationMin: 16,
     description:
-      "Vier verdedigers verdedigen als linie hun zone tegen vier aanvallers. Bal veroveren en uitverdedigen naar een steunpunt levert een punt op.",
+      "Vier verdedigers verdedigen als linie hun zone tegen vier aanvallers. Bal veroveren en uitverdedigen naar een steunpunt = punt.",
+    setup:
+      "Vak 32×24 m; twee kleine doeltjes aan de onderkant die de verdedigers (oranje) verdedigen. Vier aanvallers (blauw) starten bovenin met de bal.",
+    steps: [
+      "Blauw valt aan en probeert door de zone te scoren op een doeltje.",
+      "De oranje linie blijft op onderlinge afstand en schuift mee met de bal.",
+      "De speler dichtst bij de bal knijpt erop; de rest dekt de ruimte.",
+      "Na balwinst verdedigt oranje uit naar een steunpunt = punt.",
+    ],
+    rules: "De verdedigende linie mag niet verder dan 3 m uit elkaar staan.",
     coachingPoints: "Onderlinge afstanden, knijpen naar de bal, op het juiste moment doorschuiven.",
     progressions: "Voeg een spits toe (4v5) om de linie te belasten.",
     simplifications: "Verklein de breedte van de zone.",
     aids: [
-      ...box(32, 24),
-      { type: "SMALL_GOAL", x: 8, y: 24 },
-      { type: "SMALL_GOAL", x: 24, y: 24 },
-      { type: "BALL", x: 16, y: 2 },
+      smallGoal(8, 24), smallGoal(24, 24),
+      ...rowP(16, 6, 4, 24, "P"),
+      ...rowP(16, 15, 4, 22, "O"),
+      ball(5.6, 6),
+    ],
+    actions: [
+      pass([4, 6], [16, 6], "verplaatsen"),
+      run([16, 15], [14, 10], "knijpen"),
     ],
   },
 
@@ -243,17 +638,28 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 8,
     durationMin: 15,
     description:
-      "4-tegen-4 met aan beide kanten twee kleine doeltjes. Bij balverlies of balwinst moet er direct worden omgeschakeld naar de andere fase.",
+      "4-tegen-4 met aan beide kanten twee kleine doeltjes. Bij balverlies of balwinst direct omschakelen.",
+    setup:
+      "Vak 30×22 m met twee kleine doeltjes aan élke korte zijde. Blauw en oranje verdeeld over het vak; blauw start met de bal.",
+    steps: [
+      "Blauw valt aan op de twee doeltjes aan één kant.",
+      "Oranje verdedigt en probeert de bal te veroveren.",
+      "Bij balwinst schakelt oranje direct om naar de doeltjes aan de andere kant.",
+      "De eerste actie na balverlies/balwinst is het belangrijkst — meteen handelen.",
+    ],
+    rules: "Na balwinst mag er pas gescoord worden nadat de bal één keer is rondgespeeld.",
     coachingPoints: "Snel handelen na balverlies/balwinst, eerste actie is de belangrijkste.",
     progressions: "Beperk het aantal keer raken bij balbezit.",
     simplifications: "Vergroot de ruimte zodat er meer tijd is.",
     aids: [
-      ...box(30, 22),
-      { type: "SMALL_GOAL", x: 8, y: 0 },
-      { type: "SMALL_GOAL", x: 22, y: 0 },
-      { type: "SMALL_GOAL", x: 8, y: 22 },
-      { type: "SMALL_GOAL", x: 22, y: 22 },
-      { type: "BALL", x: 15, y: 11 },
+      smallGoal(8, 0), smallGoal(22, 0), smallGoal(8, 22), smallGoal(22, 22),
+      P(9, 7, "A"), P(6, 12, "B"), P(14, 11, "C"), P(9, 16, "D"),
+      O(21, 7, "1"), O(24, 12, "2"), O(17, 11, "3"), O(21, 16, "4"),
+      ball(12.6, 11),
+    ],
+    actions: [
+      pass([14, 11], [9, 7], "opbouw"),
+      run([17, 11], [14.5, 11], "omschakelen"),
     ],
   },
   {
@@ -270,16 +676,31 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 9,
     durationMin: 16,
     description:
-      "Na balwinst schakelt het team direct om en zoekt de diepgaande spits om te counteren op het grote doel.",
+      "Na balwinst direct omschakelen en de diepgaande spits vinden om te counteren op het grote doel.",
+    setup:
+      "Groot doel met keeper aan de bovenkant, twee kleine doeltjes onderin. 3 blauw tegen 3 oranje in het midden, met een blauwe spits vooraan.",
+    steps: [
+      "Oranje is in balbezit en probeert te scoren op de kleine doeltjes.",
+      "Blauw verovert de bal en schakelt direct om.",
+      "Blauw speelt zo snel mogelijk diep op de spits.",
+      "De spits neemt mee of werkt in één keer af op het grote doel.",
+    ],
+    rules: "Na balwinst binnen 8 seconden afronden, anders begint oranje opnieuw.",
     coachingPoints: "Diepte kiezen, tempo in de omschakeling, keuze pass of dribbel.",
     progressions: "Verklein de tijd om af te ronden na balwinst.",
     simplifications: "Zonder tijdslimiet, extra aanvaller.",
     aids: [
-      ...box(32, 22),
-      { type: "BIG_GOAL", x: 16, y: 0, label: "doel + keeper" },
-      { type: "SMALL_GOAL", x: 8, y: 22 },
-      { type: "SMALL_GOAL", x: 24, y: 22 },
-      { type: "BALL", x: 16, y: 14 },
+      bigGoal(16, 1.2),
+      O(16, 3.4, "K"),
+      smallGoal(8, 22), smallGoal(24, 22),
+      P(10, 12, "A"), P(16, 14, "B"), P(22, 12, "C"),
+      P(19, 6, "S"),
+      O(10, 9, "1"), O(16, 8, "2"), O(22, 9, "3"),
+      ball(17.4, 14),
+    ],
+    actions: [
+      pass([16, 14], [19, 7], "counter"),
+      shot([19, 5.5], [16, 1.8], "afronden"),
     ],
   },
 
@@ -298,15 +719,28 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 18,
     durationMin: 20,
     description:
-      "Afsluitende partij op twee grote doelen met keepers. Laat het thema van de training terugkomen door een korte regel toe te voegen.",
+      "Afsluitende partij op twee grote doelen met keepers. Laat het thema van de training terugkomen met een korte extra regel.",
+    setup:
+      "Half veld met aan beide korte zijden een groot doel en keeper. Twee teams van 8 (incl. keeper) met hesjes. Reserveballen bij de doelen.",
+    steps: [
+      "Vrije partij 8 tegen 8 op de twee grote doelen.",
+      "Speel wat er is getraind; probeer het thema van vandaag terug te laten komen.",
+      "Bij een dode bal snel doorspelen met een reservebal.",
+      "Coach kort en positief; laat de kinderen vooral voetballen.",
+    ],
+    rules: "Voeg een themaregel toe (bijv. punt voor druk zetten binnen 5 sec).",
     coachingPoints: "Speel wat is getraind; coach kort en positief op het thema.",
     progressions: "Voeg een themaregel toe (bijv. punt voor druk zetten binnen 5 sec).",
     simplifications: "Speel met minder spelers en meer ruimte.",
     aids: [
-      ...box(50, 35),
-      { type: "BIG_GOAL", x: 25, y: 0, label: "doel + keeper" },
-      { type: "BIG_GOAL", x: 25, y: 35, label: "doel + keeper" },
-      { type: "BALL", x: 25, y: 17 },
+      bigGoal(25, 1.2), bigGoal(25, 33.8),
+      P(25, 3.4, "K"), ...rowP(25, 10, 3, 30), ...rowP(25, 16, 3, 24), P(25, 21),
+      O(25, 31.6, "K"), ...rowP(25, 25, 3, 30, "O"), ...rowP(25, 20, 3, 24, "O"), O(25, 15),
+      ball(26.4, 15),
+    ],
+    actions: [
+      pass([25, 16], [37, 16], "opbouw"),
+      pass([37, 16], [31, 23], "diep"),
     ],
   },
   {
@@ -323,132 +757,801 @@ export const SEED_DRILLS: SeedDrill[] = [
     maxPlayers: 16,
     durationMin: 20,
     description:
-      "Partij waarin het aanvallen wordt beloond: een doelpunt na een aanval over de flank of na een combinatie in het strafschopgebied telt dubbel.",
+      "Partij waarin aanvallen wordt beloond: een doelpunt na een flankaanval of combinatie telt dubbel.",
+    setup:
+      "Half veld met twee grote doelen en keepers. Twee teams van 7 (incl. keeper). Reserveballen bij de doelen zodat het spel doorgaat.",
+    steps: [
+      "Vrije partij 7 tegen 7 met de opdracht om te blijven aanvallen.",
+      "Zoek breedte via de flanken en versnel op het juiste moment.",
+      "Een doelpunt na een flankaanval of combinatie telt dubbel.",
+      "Blijf na balverlies niet hangen: druk zetten of terug organiseren.",
+    ],
+    rules: "Doelpunt na flankaanval / combinatie = 2 punten.",
     coachingPoints: "Breedte en diepte in de aanval, durf te versnellen, afronden.",
     progressions: "Beperk het aantal keer raken van het verdedigende team.",
     simplifications: "Geef het aanvallende team een extra speler.",
     aids: [
-      ...box(48, 34),
-      { type: "BIG_GOAL", x: 24, y: 0, label: "doel + keeper" },
-      { type: "BIG_GOAL", x: 24, y: 34, label: "doel + keeper" },
-      { type: "BALL", x: 24, y: 17 },
+      bigGoal(24, 1.2), bigGoal(24, 32.8),
+      P(24, 3.4, "K"), ...rowP(24, 10, 3, 30), P(16, 15), P(32, 15), P(24, 14),
+      O(24, 30.6, "K"), ...rowP(24, 25, 3, 30, "O"), O(16, 19), O(32, 19), O(24, 20),
+      ball(25.4, 14),
+    ],
+    actions: [
+      pass([24, 14], [32, 15], "breed"),
+      pass([32, 15], [30, 22], "voorzet"),
     ],
   },
 
   // ==== extra warming-ups ===================================================
-  ex("WARMUP", "NEUTRAL", "Rondo 5-tegen-2", 12, 12, 7, 10, 14, 10,
-    "Vijf spelers houden de bal rond, twee in het midden proberen te onderscheppen. Wie balverlies veroorzaakt, gaat naar het midden.",
-    "Aanspeelbaar staan, eerste raak spelen, tempo hoog houden.",
-    [...box(12, 12), { type: "BALL", x: 6, y: 6 }]),
-  ex("WARMUP", "NEUTRAL", "Dribbelparcours met richtingsveranderingen", 22, 16, 8, 12, 16, 10,
-    "Spelers dribbelen door een parcours van pylonen met kap- en draaibewegingen; op tempo terug in de rij.",
-    "Bal dicht bij de voet, kijk op na elke actie, gebruik beide voeten.",
-    [...box(22, 16), { type: "CONE", x: 7, y: 8 }, { type: "CONE", x: 11, y: 8 }, { type: "CONE", x: 15, y: 8 }],
-    "PER_PLAYER"),
-  ex("WARMUP", "NEUTRAL", "Passen in tweetallen met beweging", 24, 18, 8, 12, 16, 10,
-    "In tweetallen inpassen en bewegen: aan- en afgeven, wandje leggen, diep sturen. Wissel na enkele minuten van partner.",
-    "Zuivere pass, meebewegen, communiceren.",
-    [...box(24, 18), { type: "BALL", x: 8, y: 9 }, { type: "BALL", x: 16, y: 9 }],
-    "PER_PAIR"),
-  ex("WARMUP", "NEUTRAL", "Dynamische warming-up met bal", 20, 15, 8, 14, 18, 8,
-    "Loop-, spring- en mobiliteitsoefeningen afgewisseld met korte balcontacten. Rustig opbouwen in intensiteit.",
-    "Nette uitvoering, geleidelijk versnellen.",
-    [...box(20, 15)],
-    "PER_PLAYER"),
+  {
+    title: "Rondo 5-tegen-2",
+    type: "WARMUP", theme: "NEUTRAL", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 12, footprintY: 12,
+    minPlayers: 7, idealPlayers: 10, maxPlayers: 14, durationMin: 10,
+    description:
+      "Vijf spelers houden de bal rond, twee in het midden proberen te onderscheppen.",
+    setup:
+      "Vijfhoek van pylonen (±10 m). Vijf spelers op de punten (blauw), twee pakkers in het midden (oranje). Overige spelers wisselen in bij balverlies.",
+    steps: [
+      "De vijf buitenspelers spelen de bal rond, laag over de grond.",
+      "De twee pakkers in het midden jagen samen op de bal.",
+      "Wie balverlies veroorzaakt of onderschept wordt, gaat het midden in.",
+      "Speel zoveel mogelijk in één keer; kaats op de eerste vrije man.",
+    ],
+    rules: "Maximaal 2× raken; alleen over de grond spelen.",
+    coachingPoints: "Aanspeelbaar staan, eerste raak spelen, tempo hoog houden.",
+    progressions: "Beperk tot 1× raken; verklein de vijfhoek.",
+    simplifications: "Vergroot de ruimte of speel 5-tegen-1.",
+    aids: [
+      P(2, 2, "A"), P(10, 2, "B"), P(11.5, 7.5, "C"), P(6, 11, "D"), P(0.5, 7.5, "E"),
+      O(5, 6, "1"), O(8, 6.5, "2"),
+      ball(3.6, 2),
+    ],
+    actions: [
+      pass([2, 2], [10, 2], "1"),
+      pass([10, 2], [6, 11], "2"),
+    ],
+  },
+  {
+    title: "Dribbelparcours met richtingsveranderingen",
+    type: "WARMUP", theme: "NEUTRAL", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 22, footprintY: 16,
+    minPlayers: 8, idealPlayers: 12, maxPlayers: 16, durationMin: 10,
+    ballScaling: "PER_PLAYER",
+    description:
+      "Spelers dribbelen door een pylonparcours met kap- en draaibewegingen; op tempo terug in de rij.",
+    setup:
+      "Slalom van drie pylonen in het midden. Twee rijen spelers (start links, aankomst rechts), iedereen een bal.",
+    steps: [
+      "Eerste speler dribbelt slalommend langs de pylonen, bal dicht aan de voet.",
+      "Bij elke pylon kappen met de binnen- of buitenkant en versnellen.",
+      "Na de laatste pylon uitdribbelen en aansluiten in de rij rechts.",
+      "Volgende speler vertrekt zodra de vorige de eerste pylon voorbij is.",
+    ],
+    rules: "Gebruik afwisselend links en rechts om te kappen.",
+    coachingPoints: "Bal dicht bij de voet, kijk op na elke actie, gebruik beide voeten.",
+    progressions: "Voeg een schijnbeweging bij elke pylon toe.",
+    simplifications: "Grotere afstand tussen de pylonen; rustiger tempo.",
+    aids: [
+      cone(8, 8), cone(11, 8), cone(14, 8),
+      ...queue(2, 3, 5, "start"),
+      P(9, 12), P(15, 5),
+      P(20, 3), P(20, 6), P(20, 9), P(20, 12), P(20, 15),
+      ball(3.3, 3),
+    ],
+    actions: [
+      dribble([3, 3], [8, 7], "dribbel"),
+      dribble([8, 8.5], [14, 8.5], "slalom"),
+    ],
+  },
+  {
+    title: "Passen in tweetallen met beweging",
+    type: "WARMUP", theme: "NEUTRAL", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 24, footprintY: 18,
+    minPlayers: 8, idealPlayers: 12, maxPlayers: 16, durationMin: 10,
+    ballScaling: "PER_PAIR",
+    description:
+      "In tweetallen inpassen en bewegen: aan- en afgeven, wandje leggen, diep sturen.",
+    setup:
+      "Zes tweetallen verspreid over het vak, elk tweetal één bal, op ±5 m van elkaar.",
+    steps: [
+      "Speler A speelt in op B en beweegt daarna mee naar een nieuwe plek.",
+      "B kaatst in één keer terug of legt een wandje.",
+      "Wandel/jog samen door het vak terwijl je blijft overspelen.",
+      "Wissel na enkele minuten van partner.",
+    ],
+    rules: "Maximaal 2× raken; blijf in beweging, niet stilstaan.",
+    coachingPoints: "Zuivere pass, meebewegen, communiceren.",
+    progressions: "Alles in één keer; vergroot de onderlinge afstand.",
+    simplifications: "Sta stil tegenover elkaar en pass rustig heen en weer.",
+    aids: [
+      P(4, 4, "A"), P(8, 4, "B"), ball(6, 4),
+      P(15, 4), P(20, 5), ball(17.5, 4.5),
+      P(4, 10), P(9, 11), ball(6.5, 10.5),
+      P(15, 10), P(20, 10), ball(17.5, 10),
+      P(5, 15), P(9, 16), ball(7, 15.5),
+      P(15, 15), P(20, 15), ball(17.5, 15),
+    ],
+    actions: [
+      pass([4, 4], [8, 4], "inspelen"),
+      pass([8, 4.6], [4.8, 4.6], "kaats"),
+    ],
+  },
+  {
+    title: "Dynamische warming-up met bal",
+    type: "WARMUP", theme: "NEUTRAL", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 20, footprintY: 15,
+    minPlayers: 8, idealPlayers: 14, maxPlayers: 18, durationMin: 8,
+    ballScaling: "PER_PLAYER",
+    description:
+      "Loopscholing en mobiliteit over een korte baan, afgewisseld met balcontacten. Rustig opbouwen.",
+    setup:
+      "Twee lijnen op ±12 m van elkaar (met pylonen gemarkeerd). Spelers in twee rijen achter de startlijn, iedereen een bal aan de kant.",
+    steps: [
+      "Heen: hoge knieheffing (skippen), rustig terug joggen.",
+      "Heen: hakken-billen, terug joggen.",
+      "Heen: zijwaartse schaatssprongen, terug joggen.",
+      "Heen: versnellen over de laatste 5 m; daarna 5 balcontacten (tik-tik).",
+    ],
+    rules: "Nette uitvoering vóór snelheid; steeds volledig terug herstellen.",
+    coachingPoints: "Rechte romp, actieve armen, geleidelijk versnellen.",
+    progressions: "Voeg een sprong of draai halverwege toe.",
+    simplifications: "Kortere baan, lager tempo.",
+    aids: [
+      cone(0.6, 7.5), cone(19.4, 7.5),
+      ...rowP(10.5, 13, 7, 16),
+      ...rowP(10.5, 2, 7, 16),
+      ball(6, 14.5), ball(15, 14.5),
+    ],
+    actions: [
+      run([3, 13], [3, 2.5], "skippen"),
+      run([7.5, 2.5], [7.5, 13], "terug joggen"),
+    ],
+  },
 
   // ==== extra ATTACK exercises =============================================
-  ex("EXERCISE", "ATTACK", "Positiespel 5-tegen-3 met kantspelers", 32, 24, 8, 9, 10, 16,
-    "Vijf tegen drie in balbezit met twee vrije kantspelers. Doel: de bal rondspelen en via de zijkant een doeltje aanvallen.",
-    "Breedte benutten, derde man inschakelen, tempo van de pass.",
-    [...box(32, 24), { type: "SMALL_GOAL", x: 8, y: 0 }, { type: "SMALL_GOAL", x: 24, y: 0 }, { type: "BALL", x: 16, y: 12 }]),
-  ex("EXERCISE", "ATTACK", "Aanvallen over de flank met voorzet", 34, 26, 8, 9, 10, 18,
-    "Opbouw via de flank, voorzet en inloop van twee spelers op het grote doel. Wissel van kant per beurt.",
-    "Timing van de voorzet, scherpe inloop, bewust afronden.",
-    [...box(34, 26), { type: "BIG_GOAL", x: 17, y: 0, label: "doel + keeper" }, { type: "CONE", x: 30, y: 12 }, { type: "BALL", x: 6, y: 18 }]),
-  ex("EXERCISE", "ATTACK", "Passeren en scoren 2-tegen-1", 26, 20, 6, 7, 8, 15,
-    "Twee aanvallers tegen één verdediger richting klein doel. Kies: zelf doorgaan of de vrije man aanspelen.",
-    "Beslissing op tijd, tempo in de actie, oog voor de medespeler.",
-    [...box(26, 20), { type: "SMALL_GOAL", x: 13, y: 0 }, { type: "BALL", x: 13, y: 15 }]),
-  ex("EXERCISE", "ATTACK", "Overtal aanvallen 4-tegen-3 naar groot doel", 34, 26, 7, 8, 9, 18,
-    "Vier aanvallers benutten de overtalsituatie tegen drie verdedigers en ronden af op het grote doel.",
-    "Overtal uitspelen, breedte houden, snel afronden.",
-    [...box(34, 26), { type: "BIG_GOAL", x: 17, y: 0, label: "doel + keeper" }, { type: "BALL", x: 17, y: 18 }]),
-  ex("EXERCISE", "ATTACK", "Combineren door het centrum", 28, 22, 6, 8, 8, 15,
-    "Door snelle combinaties (één-tweetjes) door het midden een dieptepass op een medespeler in de zone bereiken.",
-    "Eén-tweetjes, inspeelmoment, dieptepass op het juiste moment.",
-    [...box(28, 22), { type: "SMALL_GOAL", x: 8, y: 0 }, { type: "SMALL_GOAL", x: 20, y: 0 }, { type: "BALL", x: 14, y: 16 }]),
-  ex("EXERCISE", "ATTACK", "Dieptepass en inloop 4-tegen-2", 30, 22, 6, 7, 8, 16,
-    "Vier tegen twee in balbezit; op het juiste moment een dieptepass geven en inlopen om te scoren op een doeltje.",
-    "Aanspeelbaar staan, dieptepass herkennen, inlopen.",
-    [...box(30, 22), { type: "SMALL_GOAL", x: 15, y: 0 }, { type: "BALL", x: 15, y: 16 }]),
+  {
+    title: "Positiespel 5-tegen-3 met kantspelers",
+    type: "EXERCISE", theme: "ATTACK", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 32, footprintY: 24,
+    minPlayers: 8, idealPlayers: 9, maxPlayers: 10, durationMin: 16,
+    description: "Balbezit met twee vrije kantspelers; via de zijkant een doeltje aanvallen.",
+    setup: "Vak 32×24 m met twee kleine doeltjes bovenaan. Vier balbezitters centraal (blauw) plus twee kantspelers op de zijlijn, drie verdedigers (oranje) in het midden.",
+    steps: [
+      "De vier centrale spelers spelen rond en betrekken de kantspelers.",
+      "De kantspelers geven breedte en spelen in één keer terug of diep.",
+      "Zoek de derde man om de drie verdedigers te ontwijken.",
+      "Na genoeg passes een doeltje aanvallen; bij balverlies wisselen.",
+    ],
+    rules: "Kantspelers maximaal 2× raken en scoren niet zelf.",
+    coachingPoints: "Breedte benutten, derde man inschakelen, tempo van de pass.",
+    progressions: "Verklein de ruimte of geef de verdedigers een extra speler.",
+    simplifications: "Vergroot de ruimte of speel 5-tegen-2.",
+    aids: [
+      smallGoal(8, 0), smallGoal(24, 0),
+      P(10, 15, "A"), P(22, 15, "B"), P(12, 9, "C"), P(20, 9, "D"),
+      P(1.5, 12, "K"), P(30.5, 12, "K"),
+      O(14, 12, "1"), O(18, 13, "2"), O(16, 8, "3"),
+      ball(11.4, 15),
+    ],
+    actions: [pass([10, 15], [1.5, 12], "kant"), pass([1.5, 12], [20, 9], "derde man")],
+  },
+  {
+    title: "Aanvallen over de flank met voorzet",
+    type: "EXERCISE", theme: "ATTACK", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 34, footprintY: 26,
+    minPlayers: 8, idealPlayers: 9, maxPlayers: 10, durationMin: 18,
+    description: "Opbouw via de flank, voorzet en inloop van twee spelers op het grote doel.",
+    setup: "Groot doel met keeper. Startpositie centraal (A) met de ballen, vleugelspeler rechts (B), twee inlopers centraal (C en D). Wissel per beurt van kant.",
+    steps: [
+      "A speelt de bal naar vleugelspeler B op de flank.",
+      "B neemt mee tot de achterlijn en geeft een lage voorzet.",
+      "C loopt naar de eerste paal, D naar de tweede paal.",
+      "Een van de inlopers werkt de voorzet in één keer af.",
+    ],
+    rules: "Voorzet laag en hard; afronden in één contact.",
+    coachingPoints: "Timing van de voorzet, scherpe inloop, bewust afronden.",
+    progressions: "Voeg een verdediger in het gebied toe.",
+    simplifications: "Hogere, langzamere voorzet; controle toegestaan.",
+    aids: [
+      bigGoal(17, 1.2), P(17, 3.4, "K"),
+      ...queue(6, 20, 3, "A"), disc(4.5, 20),
+      P(30, 16, "B"), disc(31.5, 16),
+      P(14, 11, "C"), P(20, 11, "D"),
+      O(24, 9, "1"),
+      ball(7.4, 19),
+    ],
+    actions: [
+      pass([6, 20], [30, 16], "1 naar flank"),
+      carry([30, 15.5], [30, 7], "meenemen"),
+      pass([30, 6.5], [16, 7], "voorzet"),
+      run([14, 11], [16, 7], "inloop"),
+      shot([16, 6.5], [17, 3.6], "afronden"),
+    ],
+  },
+  {
+    title: "Passeren en scoren 2-tegen-1",
+    type: "EXERCISE", theme: "ATTACK", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 26, footprintY: 20,
+    minPlayers: 6, idealPlayers: 7, maxPlayers: 8, durationMin: 15,
+    description: "Twee aanvallers tegen één verdediger richting klein doel: zelf gaan of de vrije man spelen.",
+    setup: "Klein doel bovenaan. Twee aanvallers (A met bal, B) starten onderin, één verdediger (oranje) ervoor. Overige spelers wachten achter A en B.",
+    steps: [
+      "A dribbelt in op de verdediger en dwingt hem te kiezen.",
+      "Kiest de verdediger voor A, dan legt A af op de vrije B.",
+      "Blijft de verdediger op B, dan gaat A zelf door en scoort.",
+      "Na de poging schuiven de wachtende spelers door.",
+    ],
+    rules: "Maximaal 4 seconden om af te ronden.",
+    coachingPoints: "Beslissing op tijd, tempo in de actie, oog voor de medespeler.",
+    progressions: "Verklein de tijd; verdediger start actiever.",
+    simplifications: "Grotere ruimte of passieve verdediger.",
+    aids: [
+      smallGoal(13, 0),
+      P(9, 15, "A"), P(17, 15, "B"),
+      O(13, 9, "1"),
+      P(9, 17.5), P(17, 17.5),
+      P(6, 19), P(20, 19),
+      ball(10.4, 15),
+    ],
+    actions: [pass([9, 15], [17, 13], "pass"), shot([16, 9], [13, 0.8], "scoren")],
+  },
+  {
+    title: "Overtal aanvallen 4-tegen-3 naar groot doel",
+    type: "EXERCISE", theme: "ATTACK", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 34, footprintY: 26,
+    minPlayers: 7, idealPlayers: 8, maxPlayers: 9, durationMin: 18,
+    description: "Vier aanvallers benutten de overtalsituatie tegen drie verdedigers en ronden af op het grote doel.",
+    setup: "Groot doel met keeper (oranje). Vier aanvallers (blauw) starten onderin, drie verdedigers (oranje) ervoor.",
+    steps: [
+      "De vier aanvallers vallen snel aan en houden breedte.",
+      "Speel de overtal uit: trek een verdediger uit en speel de vrije man.",
+      "Zoek zo snel mogelijk een goede afrondkans.",
+      "Bij balverlies stopt de aanval; nieuwe groep start.",
+    ],
+    rules: "Binnen 10 seconden afronden.",
+    coachingPoints: "Overtal uitspelen, breedte houden, snel afronden.",
+    progressions: "Maak er 4-tegen-4 van.",
+    simplifications: "Verdedigers verdedigen passief.",
+    aids: [
+      bigGoal(17, 1.2), O(17, 3.4, "K"),
+      P(8, 16, "A"), P(26, 16, "B"), P(14, 11, "C"), P(20, 11, "D"),
+      O(12, 7, "1"), O(22, 7, "2"), O(17, 12, "3"),
+      ball(9.4, 16),
+    ],
+    actions: [pass([8, 16], [20, 11], "overtal"), shot([20, 10], [17, 3.6], "afronden")],
+  },
+  {
+    title: "Combineren door het centrum",
+    type: "EXERCISE", theme: "ATTACK", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 28, footprintY: 22,
+    minPlayers: 6, idealPlayers: 8, maxPlayers: 8, durationMin: 15,
+    description: "Via snelle één-tweetjes door het midden een dieptepass op de spits bereiken.",
+    setup: "Twee kleine doeltjes bovenaan. Baltbezitter A onderin, kaatsers B en C centraal, spits D voorin; twee verdedigers (oranje).",
+    steps: [
+      "A speelt in op B en loopt mee (één-tweetje).",
+      "B kaatst terug; A speelt door op C.",
+      "C legt de bal in de diepte op spits D.",
+      "D draait open en scoort op een van de doeltjes.",
+    ],
+    rules: "Kaatsen in één keer; maximaal 2 verdedigers erdoor.",
+    coachingPoints: "Eén-tweetjes, inspeelmoment, dieptepass op het juiste moment.",
+    progressions: "Voeg een derde verdediger toe.",
+    simplifications: "Verdedigers passief; kortere afstanden.",
+    aids: [
+      smallGoal(8, 0), smallGoal(20, 0),
+      ...queue(14, 17, 3, "A"),
+      P(9, 12, "B"), P(19, 12, "C"), P(14, 7, "D"),
+      O(11, 9, "1"), O(17, 9, "2"),
+      ball(15.4, 17),
+    ],
+    actions: [
+      pass([14, 17], [9, 12], "1"),
+      pass([9, 12], [13, 15], "2 kaats"),
+      pass([13, 15], [14, 8], "3 diep"),
+      shot([14, 7], [8, 0.8], "scoren"),
+    ],
+  },
+  {
+    title: "Dieptepass en inloop 4-tegen-2",
+    type: "EXERCISE", theme: "ATTACK", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 30, footprintY: 22,
+    minPlayers: 6, idealPlayers: 7, maxPlayers: 8, durationMin: 16,
+    description: "Vier tegen twee in balbezit; op het juiste moment diep spelen en inlopen om te scoren.",
+    setup: "Klein doel bovenaan. Vier balbezitters (blauw) rond twee verdedigers (oranje); één blauwe speler wacht om in te lopen.",
+    steps: [
+      "De vier houden de bal vast en zoeken het inspeelmoment.",
+      "Zodra de ruimte achter de verdedigers openligt: dieptepass.",
+      "Een medespeler loopt op het juiste moment in op de bal.",
+      "De inloper werkt af op het kleine doel.",
+    ],
+    rules: "De dieptepass moet in de loop worden gegeven, niet in de voeten.",
+    coachingPoints: "Aanspeelbaar staan, dieptepass herkennen, inlopen.",
+    progressions: "Beperk het aantal keer raken.",
+    simplifications: "Vergroot de ruimte of speel 4-tegen-1.",
+    aids: [
+      smallGoal(15, 0),
+      P(7, 16, "A"), P(23, 16, "B"), P(11, 11, "C"), P(19, 11, "D"),
+      O(13, 9, "1"), O(17, 9, "2"),
+      P(15, 19, "E"),
+      ball(8.4, 16),
+    ],
+    actions: [
+      pass([7, 16], [19, 11], "rondspelen"),
+      pass([19, 11], [15, 5], "diep"),
+      run([11, 11], [15, 6], "inloop"),
+      shot([15, 5], [15, 0.8], "scoren"),
+    ],
+  },
 
   // ==== extra DEFEND exercises =============================================
-  ex("EXERCISE", "DEFEND", "1-tegen-1 verdedigen naar twee doeltjes", 20, 16, 6, 8, 8, 14,
-    "Verdediger verdedigt twee kleine doeltjes tegen één aanvaller. Bij balwinst mag de verdediger zelf scoren.",
-    "Goede uitgangshouding, sturen naar buiten, geduld en timing.",
-    [...box(20, 16), { type: "SMALL_GOAL", x: 6, y: 0 }, { type: "SMALL_GOAL", x: 14, y: 0 }, { type: "BALL", x: 10, y: 14 }]),
-  ex("EXERCISE", "DEFEND", "Kantelen in de linie 4-tegen-2", 32, 20, 6, 7, 8, 15,
-    "Een linie van vier kantelt met de bal mee tegen twee aanvallers en probeert de bal te veroveren.",
-    "Onderlinge afstanden, kantelen, druk op de bal.",
-    [...box(32, 20), { type: "SMALL_GOAL", x: 8, y: 20 }, { type: "SMALL_GOAL", x: 24, y: 20 }, { type: "BALL", x: 16, y: 4 }]),
-  ex("EXERCISE", "DEFEND", "Verdedigen van de voorzet", 30, 24, 8, 9, 10, 16,
-    "Verdedigers verdedigen voorzetten vanaf de flank; koppen of onderscheppen en uitverdedigen naar een steunpunt.",
-    "Positie t.o.v. bal en tegenstander, druk op de voorzet, kort dekken in het zestienmetergebied.",
-    [...box(30, 24), { type: "BIG_GOAL", x: 15, y: 0, label: "doel + keeper" }, { type: "CONE", x: 27, y: 10 }, { type: "BALL", x: 27, y: 8 }]),
-  ex("EXERCISE", "DEFEND", "Compact blok 6-tegen-4", 34, 26, 9, 10, 11, 18,
-    "Zes verdedigers houden een compact blok tegen vier aanvallers plus rustspelers. Bal veroveren = punt.",
-    "Compact blijven, samen verdedigen, moment van druk kiezen.",
-    [...box(34, 26), { type: "SMALL_GOAL", x: 10, y: 26 }, { type: "SMALL_GOAL", x: 24, y: 26 }, { type: "BALL", x: 17, y: 4 }]),
-  ex("EXERCISE", "DEFEND", "Onderscheppen en uitverdedigen 4-tegen-4", 30, 22, 8, 8, 10, 16,
-    "Vier tegen vier; het verdedigende team probeert te onderscheppen en de bal rustig uit te verdedigen naar een doeltje.",
-    "Dekkingsschaduw, onderscheppen, eerste pass na balwinst.",
-    [...box(30, 22), { type: "SMALL_GOAL", x: 8, y: 22 }, { type: "SMALL_GOAL", x: 22, y: 22 }, { type: "BALL", x: 15, y: 4 }]),
-  ex("EXERCISE", "DEFEND", "Duel om de tweede bal", 24, 20, 8, 8, 10, 14,
-    "Na een lange bal strijden twee teams om de tweede bal en proberen die te veroveren en te behouden.",
-    "Anticiperen op de tweede bal, agressief maar gecontroleerd duelleren.",
-    [...box(24, 20), { type: "SMALL_GOAL", x: 6, y: 0 }, { type: "SMALL_GOAL", x: 18, y: 20 }, { type: "BALL", x: 12, y: 10 }]),
+  {
+    title: "1-tegen-1 verdedigen naar twee doeltjes",
+    type: "EXERCISE", theme: "DEFEND", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 20, footprintY: 16,
+    minPlayers: 6, idealPlayers: 8, maxPlayers: 8, durationMin: 14,
+    description: "Verdediger verdedigt twee kleine doeltjes tegen één aanvaller. Bij balwinst mag hij zelf scoren.",
+    setup: "Twee kleine doeltjes bovenaan. Aanvaller (blauw) met bal onderin, verdediger (oranje) ertussen. Wachtende aanvallers links, verdedigers rechts.",
+    steps: [
+      "De aanvaller probeert via een van de twee doeltjes te scoren.",
+      "De verdediger neemt een goede uitgangshouding aan (zijwaarts).",
+      "Hij stuurt de aanvaller naar buiten en kiest zijn moment om te duelleren.",
+      "Wint de verdediger de bal, dan scoort hij zelf; daarna wisselen.",
+    ],
+    rules: "De aanvaller heeft maximaal 8 seconden.",
+    coachingPoints: "Goede uitgangshouding, sturen naar buiten, geduld en timing.",
+    progressions: "Verklein de ruimte tussen de doeltjes.",
+    simplifications: "Grotere ruimte; verdediger start dichterbij.",
+    aids: [
+      smallGoal(6, 0), smallGoal(14, 0),
+      P(10, 13, "A"), O(10, 8, "V"),
+      P(2, 10), P(2, 13), P(2, 15.5),
+      O(18, 10), O(18, 13), O(18, 15.5),
+      ball(11.4, 13),
+    ],
+    actions: [dribble([10, 13], [7, 4], "uitspelen"), run([10, 8], [8.5, 11], "sturen")],
+  },
+  {
+    title: "Kantelen in de linie 4-tegen-2",
+    type: "EXERCISE", theme: "DEFEND", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 32, footprintY: 20,
+    minPlayers: 6, idealPlayers: 7, maxPlayers: 8, durationMin: 15,
+    description: "Een linie van vier kantelt met de bal mee tegen twee aanvallers en verovert de bal.",
+    setup: "Twee kleine doeltjes onderaan die de linie verdedigt. Vier verdedigers (oranje) als linie, twee/drie aanvallers (blauw) bovenin met de bal.",
+    steps: [
+      "De aanvallers verplaatsen de bal van links naar rechts.",
+      "De hele oranje linie kantelt mee met de bal (schuin naar de bal).",
+      "De speler dichtst bij de bal knijpt erop, de rest schuift aan.",
+      "Bij balwinst verdedigen ze uit richting een doeltje.",
+    ],
+    rules: "De linie blijft op gelijke onderlinge afstand.",
+    coachingPoints: "Onderlinge afstanden, kantelen, druk op de bal.",
+    progressions: "Voeg een derde aanvaller toe.",
+    simplifications: "Kleiner veld, langzamere balverplaatsing.",
+    aids: [
+      smallGoal(8, 20), smallGoal(24, 20),
+      ...rowP(16, 12, 4, 26, "O"),
+      P(10, 5, "A"), P(22, 5, "B"), P(16, 4, "C"),
+      ball(11.4, 5),
+    ],
+    actions: [pass([10, 5], [22, 5], "verplaatsen"), run([16, 12], [21, 11], "kantelen")],
+  },
+  {
+    title: "Verdedigen van de voorzet",
+    type: "EXERCISE", theme: "DEFEND", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 30, footprintY: 24,
+    minPlayers: 8, idealPlayers: 9, maxPlayers: 10, durationMin: 16,
+    description: "Verdedigers verdedigen voorzetten vanaf de flank; koppen of onderscheppen en uitverdedigen.",
+    setup: "Groot doel met keeper. Drie/vier verdedigers (blauw) in het gebied, een vleugelspeler (oranje) met bal op de flank en twee inlopers (oranje).",
+    steps: [
+      "De vleugelspeler neemt mee tot de achterlijn en geeft een voorzet.",
+      "De verdedigers houden zicht op bal én tegenstander (open staan).",
+      "De verdediger bij de bal kort dekt, de rest dekt de ruimte.",
+      "Kop of onderschep de voorzet en verdedig uit naar buiten.",
+    ],
+    rules: "Uitverdedigen mag alleen naar de zijkant, niet door het midden.",
+    coachingPoints: "Positie t.o.v. bal en tegenstander, druk op de voorzet, kort dekken bij de eerste paal.",
+    progressions: "Twee voorzetgevers (beide flanken) om en om.",
+    simplifications: "Langzamere voorzet, minder aanvallers.",
+    aids: [
+      bigGoal(15, 1.2), P(15, 3.4, "K"),
+      P(9, 8, "1"), P(15, 9, "2"), P(21, 8, "3"), P(15, 5, "4"),
+      O(27, 11), disc(28.5, 11),
+      O(12, 13), O(18, 13), O(22, 11),
+      ball(27, 9.5),
+    ],
+    actions: [
+      carry([27, 11], [27, 6], "naar lijn"),
+      pass([27, 5.5], [16, 7], "voorzet"),
+      run([15, 9], [16, 7], "kort dekken"),
+    ],
+  },
+  {
+    title: "Compact blok 6-tegen-4",
+    type: "EXERCISE", theme: "DEFEND", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 34, footprintY: 26,
+    minPlayers: 9, idealPlayers: 10, maxPlayers: 11, durationMin: 18,
+    description: "Zes verdedigers houden een compact blok tegen vier aanvallers. Bal veroveren = punt.",
+    setup: "Twee kleine doeltjes onderaan. Zes verdedigers (oranje) in twee compacte linies, vier aanvallers (blauw) bovenin met de bal.",
+    steps: [
+      "De aanvallers proberen door het blok te combineren of te scoren.",
+      "Oranje houdt twee linies compact bij elkaar (klein blok).",
+      "Kies samen het moment om druk te zetten op de bal.",
+      "Bal veroverd? = punt; daarna weer opnieuw organiseren.",
+    ],
+    rules: "De twee linies blijven binnen 10 m van elkaar.",
+    coachingPoints: "Compact blijven, samen verdedigen, moment van druk kiezen.",
+    progressions: "Geef de aanvallers een extra speler.",
+    simplifications: "Verklein het veld zodat het blok makkelijker compact blijft.",
+    aids: [
+      smallGoal(10, 26), smallGoal(24, 26),
+      ...rowP(17, 14, 3, 26, "O"),
+      ...rowP(17, 19, 3, 20, "O"),
+      ...rowP(17, 7, 4, 26, "P"),
+      ball(6.3, 7),
+    ],
+    actions: [pass([4, 7], [30, 7], "rondspelen"), run([17, 14], [19, 10], "druk kiezen")],
+  },
+  {
+    title: "Onderscheppen en uitverdedigen 4-tegen-4",
+    type: "EXERCISE", theme: "DEFEND", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 30, footprintY: 22,
+    minPlayers: 8, idealPlayers: 8, maxPlayers: 10, durationMin: 16,
+    description: "Vier tegen vier; onderscheppen en de bal rustig uitverdedigen naar een doeltje.",
+    setup: "Twee kleine doeltjes onderaan. Twee teams van vier; blauw start met de bal bovenin.",
+    steps: [
+      "Blauw probeert op te bouwen richting de doeltjes.",
+      "Oranje sluit de passlijnen (dekkingsschaduw) en onderschept.",
+      "Na balwinst niet direct wegtrappen: rustig uitverdedigen.",
+      "Speel de eerste pass na balwinst naar een vrije medespeler.",
+    ],
+    rules: "Na balwinst eerst één keer overspelen vóór er gescoord mag worden.",
+    coachingPoints: "Dekkingsschaduw, onderscheppen, eerste pass na balwinst.",
+    progressions: "Beperk het aantal keer raken.",
+    simplifications: "Extra verdediger (4-tegen-3).",
+    aids: [
+      smallGoal(8, 22), smallGoal(22, 22),
+      ...rowP(15, 6, 4, 22, "P"),
+      ...rowP(15, 13, 4, 20, "O"),
+      ball(12.7, 6),
+    ],
+    actions: [pass([4, 6], [18.67, 6], "opbouw"), run([11.67, 13], [11, 9], "onderscheppen")],
+  },
+  {
+    title: "Duel om de tweede bal",
+    type: "EXERCISE", theme: "DEFEND", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 24, footprintY: 20,
+    minPlayers: 8, idealPlayers: 8, maxPlayers: 10, durationMin: 14,
+    description: "Na een lange bal strijden twee teams om de tweede bal en proberen die te behouden.",
+    setup: "Klein doel aan beide korte zijden. Twee teams van vier verspreid in het midden; de trainer speelt een lange bal in.",
+    steps: [
+      "De trainer speelt een hoge bal in het midden.",
+      "Beide teams anticiperen op waar de bal neerkomt.",
+      "Duelleer om de tweede bal en probeer hem te veroveren.",
+      "Bij balbezit meteen doorspelen naar het eigen doeltje.",
+    ],
+    rules: "Gecontroleerd duelleren; schouder aan schouder, niet duwen.",
+    coachingPoints: "Anticiperen op de tweede bal, agressief maar gecontroleerd duelleren.",
+    progressions: "Verklein de ruimte zodat duels intenser worden.",
+    simplifications: "Lagere ingespeelde bal, meer ruimte.",
+    aids: [
+      smallGoal(6, 0), smallGoal(18, 20),
+      P(7, 7, "A"), P(13, 6, "B"), P(10, 13, "C"), P(16, 12, "D"),
+      O(12, 9, "1"), O(17, 7, "2"), O(9, 10, "3"), O(14, 14, "4"),
+      ball(12, 3),
+    ],
+    actions: [pass([12, 18], [12, 5], "lange bal"), run([10, 13], [12, 8], "tweede bal")],
+  },
 
   // ==== extra TRANSITION exercises =========================================
-  ex("EXERCISE", "TRANSITION", "Balverovering en snel scoren", 30, 22, 8, 8, 9, 16,
-    "Twee teams; direct na balwinst zo snel mogelijk scoren op het grote doel voordat de tegenstander georganiseerd staat.",
-    "Eerste actie na balwinst, tempo, vooruit durven spelen.",
-    [...box(30, 22), { type: "BIG_GOAL", x: 15, y: 0, label: "doel + keeper" }, { type: "SMALL_GOAL", x: 8, y: 22 }, { type: "SMALL_GOAL", x: 22, y: 22 }, { type: "BALL", x: 15, y: 14 }]),
-  ex("EXERCISE", "TRANSITION", "Omschakelen 3-tegen-3-tegen-3", 26, 24, 9, 9, 9, 16,
-    "Drie teams van drie; het balverliezende team wisselt met het wachtende team. Constant om- en omschakelen.",
-    "Direct herkennen van de fase, snel handelen, communiceren.",
-    [...box(26, 24), { type: "SMALL_GOAL", x: 8, y: 0 }, { type: "SMALL_GOAL", x: 18, y: 24 }, { type: "BALL", x: 13, y: 12 }]),
-  ex("EXERCISE", "TRANSITION", "Counter na hoge druk", 34, 26, 8, 9, 10, 18,
-    "Het ene team zet hoog druk; bij balwinst counteren richting het grote doel, anders scoren op de doeltjes.",
-    "Druk zetten als team, balwinst benutten, keuze in de counter.",
-    [...box(34, 26), { type: "BIG_GOAL", x: 17, y: 0, label: "doel + keeper" }, { type: "SMALL_GOAL", x: 10, y: 26 }, { type: "SMALL_GOAL", x: 24, y: 26 }, { type: "BALL", x: 17, y: 20 }]),
-  ex("EXERCISE", "TRANSITION", "Snelle omschakeling naar de flanken", 32, 24, 8, 8, 9, 16,
-    "Na balwinst zo snel mogelijk de bal naar de vrije flank spelen om ruimte te benutten en aan te vallen.",
-    "Spelverplaatsing, tempo, timing van de flankaanval.",
-    [...box(32, 24), { type: "SMALL_GOAL", x: 8, y: 0 }, { type: "SMALL_GOAL", x: 24, y: 0 }, { type: "BALL", x: 16, y: 16 }]),
-  ex("EXERCISE", "TRANSITION", "Positiespel met omschakelmoment", 28, 22, 8, 8, 9, 15,
-    "Balbezit 5-tegen-3; bij balverlies moeten de drie direct omschakelen en proberen te scoren op een doeltje.",
-    "Rust in balbezit, direct omschakelen bij balverlies.",
-    [...box(28, 22), { type: "SMALL_GOAL", x: 8, y: 0 }, { type: "SMALL_GOAL", x: 20, y: 22 }, { type: "BALL", x: 14, y: 11 }]),
-  ex("EXERCISE", "TRANSITION", "Twee kleuren omschakelspel", 28, 20, 8, 10, 10, 15,
-    "Twee teams spelen op vier doeltjes; elke balwinst is een direct omschakelmoment naar de aanval.",
-    "Snel schakelen, eerste pass vooruit, samen jagen.",
-    [...box(28, 20), { type: "SMALL_GOAL", x: 8, y: 0 }, { type: "SMALL_GOAL", x: 20, y: 0 }, { type: "SMALL_GOAL", x: 8, y: 20 }, { type: "SMALL_GOAL", x: 20, y: 20 }, { type: "BALL", x: 14, y: 10 }]),
+  {
+    title: "Balverovering en snel scoren",
+    type: "EXERCISE", theme: "TRANSITION", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 30, footprintY: 22,
+    minPlayers: 8, idealPlayers: 8, maxPlayers: 9, durationMin: 16,
+    description: "Direct na balwinst zo snel mogelijk scoren op het grote doel, vóór de tegenstander staat.",
+    setup: "Groot doel met keeper bovenaan, twee kleine doeltjes onderaan. Vier tegen vier (blauw/oranje) in het middenveld.",
+    steps: [
+      "De teams spelen om balbezit in het middenveld.",
+      "Blauw verovert de bal en schakelt meteen om richting het grote doel.",
+      "Speel de eerste bal na winst vooruit, niet terug.",
+      "Rond zo snel mogelijk af; oranje verdedigt de doeltjes.",
+    ],
+    rules: "Na balwinst binnen 6 seconden een schot.",
+    coachingPoints: "Eerste actie na balwinst, tempo, vooruit durven spelen.",
+    progressions: "Verklein de tijd naar 5 seconden.",
+    simplifications: "Zonder tijdslimiet; extra aanvaller.",
+    aids: [
+      bigGoal(15, 1.2), O(15, 3.4, "K"),
+      smallGoal(8, 22), smallGoal(22, 22),
+      P(8, 14, "A"), P(22, 14, "B"), P(12, 10, "C"), P(18, 10, "D"),
+      O(12, 7, "1"), O(18, 7, "2"), O(15, 13, "3"),
+      ball(13.4, 10),
+    ],
+    actions: [pass([12, 10], [18, 10], "balwinst"), shot([18, 9], [15, 3.6], "snel scoren")],
+  },
+  {
+    title: "Omschakelen 3-tegen-3-tegen-3",
+    type: "EXERCISE", theme: "TRANSITION", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 26, footprintY: 24,
+    minPlayers: 9, idealPlayers: 9, maxPlayers: 9, durationMin: 16,
+    description: "Drie teams van drie; het balverliezende team wisselt met het wachtende team. Constant omschakelen.",
+    setup: "Klein doel linksboven en rechtsonder. Twee teams spelen (blauw/oranje), het derde team wacht langs de zijlijn.",
+    steps: [
+      "Twee teams spelen 3-tegen-3 op de twee doeltjes.",
+      "Het team dat de bal verliest, gaat er direct uit.",
+      "Het wachtende team komt onmiddellijk in en neemt de bal over.",
+      "Herken snel welke fase je bent: aanvallen, verdedigen of instappen.",
+    ],
+    rules: "Wisselen gaat vliegend door: geen onderbreking.",
+    coachingPoints: "Direct herkennen van de fase, snel handelen, communiceren.",
+    progressions: "Beperk het aantal keer raken.",
+    simplifications: "Groter veld, meer tijd.",
+    aids: [
+      smallGoal(8, 0), smallGoal(18, 24),
+      P(8, 10, "A"), P(14, 8, "B"), P(11, 14, "C"),
+      O(12, 16, "1"), O(18, 14, "2"), O(15, 10, "3"),
+      P(1.5, 6, "W"), P(1.5, 12, "W"), P(1.5, 18, "W"),
+      ball(9.4, 10),
+    ],
+    actions: [pass([8, 10], [14, 8], "balbezit"), run([15, 10], [12.5, 11], "omschakelen")],
+  },
+  {
+    title: "Counter na hoge druk",
+    type: "EXERCISE", theme: "TRANSITION", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 34, footprintY: 26,
+    minPlayers: 8, idealPlayers: 9, maxPlayers: 10, durationMin: 18,
+    description: "Eén team zet hoog druk; bij balwinst counteren op het grote doel, anders scoren op de doeltjes.",
+    setup: "Groot doel met keeper bovenaan, twee kleine doeltjes onderaan. Blauw zet druk, oranje probeert op te bouwen.",
+    steps: [
+      "Oranje bouwt op vanaf de doeltjes onderin.",
+      "Blauw zet als team hoog druk om de bal te veroveren.",
+      "Wint blauw de bal hoog, dan counteren ze direct op het grote doel.",
+      "Lukt de druk niet, dan verdedigt blauw terug naar eigen doeltjes.",
+    ],
+    rules: "Counter binnen 8 seconden afronden.",
+    coachingPoints: "Druk zetten als team, balwinst benutten, keuze in de counter.",
+    progressions: "Verklein de counter-tijd.",
+    simplifications: "Minder aanvallers voor oranje.",
+    aids: [
+      bigGoal(17, 1.2), O(17, 3.4, "K"),
+      smallGoal(10, 26), smallGoal(24, 26),
+      P(10, 12, "A"), P(24, 12, "B"), P(14, 16, "C"), P(20, 16, "D"),
+      O(12, 20, "1"), O(22, 20, "2"), O(17, 22, "3"),
+      ball(18.4, 20),
+    ],
+    actions: [run([14, 16], [16, 19], "hoge druk"), shot([17, 12], [17, 3.6], "counter")],
+  },
+  {
+    title: "Snelle omschakeling naar de flanken",
+    type: "EXERCISE", theme: "TRANSITION", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 32, footprintY: 24,
+    minPlayers: 8, idealPlayers: 8, maxPlayers: 9, durationMin: 16,
+    description: "Na balwinst zo snel mogelijk de bal naar de vrije flank spelen om ruimte te benutten.",
+    setup: "Twee kleine doeltjes bovenaan. Vier tegen vier in het midden; blauw start met de bal.",
+    steps: [
+      "De teams spelen om de bal in het centrum.",
+      "Bij balwinst: kop op en zoek meteen de vrije flank.",
+      "Verplaats de bal snel en breed naar de open ruimte.",
+      "Val via de flank aan op een van de doeltjes.",
+    ],
+    rules: "Na balwinst moet de bal binnen 3 passes de flank bereiken.",
+    coachingPoints: "Spelverplaatsing, tempo, timing van de flankaanval.",
+    progressions: "Beperk het aantal keer raken.",
+    simplifications: "Groter veld voor meer ruimte.",
+    aids: [
+      smallGoal(8, 0), smallGoal(24, 0),
+      P(8, 14, "A"), P(24, 14, "B"), P(16, 10, "C"), P(16, 16, "D"),
+      O(12, 11, "1"), O(20, 11, "2"), O(10, 7, "3"), O(22, 7, "4"),
+      ball(17.4, 16),
+    ],
+    actions: [pass([16, 16], [24, 14], "naar flank"), carry([24, 14], [24, 5], "aanvallen")],
+  },
+  {
+    title: "Positiespel met omschakelmoment",
+    type: "EXERCISE", theme: "TRANSITION", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 28, footprintY: 22,
+    minPlayers: 8, idealPlayers: 8, maxPlayers: 9, durationMin: 15,
+    description: "Balbezit 5-tegen-3; bij balverlies schakelen de drie direct om en proberen te scoren.",
+    setup: "Klein doel linksboven en rechtsonder. Vijf balbezitters (blauw), drie jagers (oranje).",
+    steps: [
+      "De vijf houden rustig de bal vast tegen de drie.",
+      "De drie jagen samen en proberen te onderscheppen.",
+      "Winnen de drie de bal, dan schakelen ze direct om naar een doeltje.",
+      "Verliest blauw de bal, dan jagen zij meteen terug.",
+    ],
+    rules: "Balbezitters maximaal 3× raken.",
+    coachingPoints: "Rust in balbezit, direct omschakelen bij balverlies.",
+    progressions: "Balbezitters 2× raken.",
+    simplifications: "Groter veld; 5-tegen-2.",
+    aids: [
+      smallGoal(8, 0), smallGoal(20, 22),
+      P(7, 14, "A"), P(21, 14, "B"), P(9, 9, "C"), P(19, 9, "D"), P(14, 12, "E"),
+      O(12, 11, "1"), O(16, 10, "2"), O(14, 7, "3"),
+      ball(15.4, 12),
+    ],
+    actions: [pass([7, 14], [19, 9], "rust in balbezit"), run([14, 7], [14, 10], "omschakelen")],
+  },
+  {
+    title: "Twee kleuren omschakelspel",
+    type: "EXERCISE", theme: "TRANSITION", ageMin: 13, ageMax: 18,
+    fieldType: "QUARTER", footprintX: 28, footprintY: 20,
+    minPlayers: 8, idealPlayers: 10, maxPlayers: 10, durationMin: 15,
+    description: "Twee teams spelen op vier doeltjes; elke balwinst is een direct omschakelmoment.",
+    setup: "Vier kleine doeltjes (twee aan elke korte zijde). Twee teams van vijf, blauw start met de bal.",
+    steps: [
+      "Blauw valt aan op de twee doeltjes aan één kant.",
+      "Oranje verdedigt en jaagt op de bal.",
+      "Elke balwinst is meteen een aanval de andere kant op.",
+      "Eerste pass na balwinst altijd vooruit.",
+    ],
+    rules: "Na balwinst mag pas gescoord worden na één pass.",
+    coachingPoints: "Snel schakelen, eerste pass vooruit, samen jagen.",
+    progressions: "Beperk het aantal keer raken.",
+    simplifications: "Groter veld, meer tijd.",
+    aids: [
+      smallGoal(8, 0), smallGoal(20, 0), smallGoal(8, 20), smallGoal(20, 20),
+      P(6, 6, "A"), P(12, 7, "B"), P(8, 12, "C"), P(14, 13, "D"), P(10, 10, "E"),
+      O(22, 6, "1"), O(16, 7, "2"), O(20, 12, "3"), O(24, 13, "4"), O(18, 11, "5"),
+      ball(11.4, 10),
+    ],
+    actions: [pass([6, 6], [14, 13], "balbezit"), run([18, 11], [12, 10], "omschakelen")],
+  },
 
   // ==== extra partijvormen (MATCHFORM) =====================================
-  ex("MATCHFORM", "DEFEND", "Partij met accent verdedigen 7-tegen-7", 48, 34, 10, 14, 16, 20,
-    "Partij op grote doelen waarbij goed verdedigen wordt beloond: de bal binnen 6 seconden veroveren levert een extra punt op.",
-    "Druk zetten, compact blok, samen verdedigen.",
-    [...box(48, 34), { type: "BIG_GOAL", x: 24, y: 0, label: "doel + keeper" }, { type: "BIG_GOAL", x: 24, y: 34, label: "doel + keeper" }, { type: "BALL", x: 24, y: 17 }]),
-  ex("MATCHFORM", "TRANSITION", "Partij met omschakelaccent 8-tegen-8", 50, 35, 12, 16, 18, 20,
-    "Partij op grote doelen; een doelpunt binnen 8 seconden na balwinst telt dubbel. Beloont de omschakeling.",
-    "Snel schakelen na balwinst én balverlies, tempo.",
-    [...box(50, 35), { type: "BIG_GOAL", x: 25, y: 0, label: "doel + keeper" }, { type: "BIG_GOAL", x: 25, y: 35, label: "doel + keeper" }, { type: "BALL", x: 25, y: 17 }]),
-  ex("MATCHFORM", "NEUTRAL", "Positiepartij 8-tegen-8 op balbezit", 50, 35, 12, 16, 18, 18,
-    "Partij met accent op balbezit: een X-aantal passes op rij levert een punt op, scoren op de kleine doeltjes telt dubbel.",
-    "Rust en overzicht in balbezit, aanspeelbaar staan.",
-    [...box(50, 35), { type: "SMALL_GOAL", x: 12, y: 0 }, { type: "SMALL_GOAL", x: 38, y: 0 }, { type: "SMALL_GOAL", x: 12, y: 35 }, { type: "SMALL_GOAL", x: 38, y: 35 }, { type: "BALL", x: 25, y: 17 }]),
-  ex("MATCHFORM", "NEUTRAL", "Linie-partij 6-tegen-6 op klein doel", 44, 32, 10, 12, 14, 18,
-    "Partij zonder keepers op kleine doelen; ideaal om linies en onderlinge afstanden te trainen.",
-    "Organisatie in linies, onderlinge afstanden, omschakelen.",
-    [...box(44, 32), { type: "SMALL_GOAL", x: 22, y: 0 }, { type: "SMALL_GOAL", x: 22, y: 32 }, { type: "BALL", x: 22, y: 16 }]),
+  {
+    title: "Partij met accent verdedigen 7-tegen-7",
+    type: "MATCHFORM", theme: "DEFEND", ageMin: 13, ageMax: 19,
+    fieldType: "HALF", footprintX: 48, footprintY: 34,
+    minPlayers: 10, idealPlayers: 14, maxPlayers: 16, durationMin: 20,
+    description: "Partij op grote doelen waarbij goed verdedigen wordt beloond.",
+    setup: "Half veld met twee grote doelen en keepers. Twee teams van 7 (incl. keeper).",
+    steps: [
+      "Vrije partij 7 tegen 7 op de grote doelen.",
+      "Bij balverlies meteen samen druk zetten om de bal terug te winnen.",
+      "De bal binnen 6 seconden heroveren levert een extra punt op.",
+      "Blijf compact en dek de gevaarlijke ruimtes.",
+    ],
+    rules: "Bal binnen 6 sec heroveren = 1 extra punt.",
+    coachingPoints: "Druk zetten, compact blok, samen verdedigen.",
+    progressions: "Verlaag naar 5 seconden.",
+    simplifications: "Groter veld; meer hersteltijd.",
+    aids: [
+      bigGoal(24, 1.2), bigGoal(24, 32.8),
+      P(24, 3.4, "K"), ...rowP(24, 10, 3, 30), P(16, 15), P(32, 15), P(24, 14),
+      O(24, 30.6, "K"), ...rowP(24, 25, 3, 30, "O"), O(16, 19), O(32, 19), O(24, 20),
+      ball(25.4, 14),
+    ],
+    actions: [run([24, 14], [24, 20], "druk zetten"), pass([16, 19], [24, 20], "onder druk")],
+  },
+  {
+    title: "Partij met omschakelaccent 8-tegen-8",
+    type: "MATCHFORM", theme: "TRANSITION", ageMin: 13, ageMax: 19,
+    fieldType: "HALF", footprintX: 50, footprintY: 35,
+    minPlayers: 12, idealPlayers: 16, maxPlayers: 18, durationMin: 20,
+    description: "Partij op grote doelen; een doelpunt binnen 8 seconden na balwinst telt dubbel.",
+    setup: "Half veld met twee grote doelen en keepers. Twee teams van 8 (incl. keeper).",
+    steps: [
+      "Vrije partij 8 tegen 8 op de grote doelen.",
+      "Bij balwinst zo snel mogelijk vooruit spelen en counteren.",
+      "Een doelpunt binnen 8 seconden na balwinst telt dubbel.",
+      "Ook bij balverlies direct schakelen: meteen druk of terug.",
+    ],
+    rules: "Doelpunt binnen 8 sec na balwinst = 2 punten.",
+    coachingPoints: "Snel schakelen na balwinst én balverlies, tempo.",
+    progressions: "Verlaag naar 6 seconden.",
+    simplifications: "Zonder tijdslimiet; groter veld.",
+    aids: [
+      bigGoal(25, 1.2), bigGoal(25, 33.8),
+      P(25, 3.4, "K"), ...rowP(25, 10, 3, 30), ...rowP(25, 16, 3, 24), P(25, 21),
+      O(25, 31.6, "K"), ...rowP(25, 25, 3, 30, "O"), ...rowP(25, 20, 3, 24, "O"), O(25, 15),
+      ball(26.4, 15),
+    ],
+    actions: [pass([25, 16], [37, 16], "balwinst"), pass([37, 16], [31, 24], "snel diep")],
+  },
+  {
+    title: "Positiepartij 8-tegen-8 op balbezit",
+    type: "MATCHFORM", theme: "NEUTRAL", ageMin: 13, ageMax: 19,
+    fieldType: "HALF", footprintX: 50, footprintY: 35,
+    minPlayers: 12, idealPlayers: 16, maxPlayers: 18, durationMin: 18,
+    description: "Partij met accent op balbezit: passes op rij leveren punten op, scoren op doeltjes telt dubbel.",
+    setup: "Half veld met vier kleine doeltjes (twee aan elke korte zijde), geen keepers. Twee teams van 8.",
+    steps: [
+      "Speel rustig rond en houd de bal in de ploeg.",
+      "Zes passes op rij levert een punt op.",
+      "Scoren op een van de kleine doeltjes telt dubbel.",
+      "Zorg dat je altijd aanspeelbaar staat (hoekjes maken).",
+    ],
+    rules: "6 passes = 1 punt; doelpunt = 2 punten.",
+    coachingPoints: "Rust en overzicht in balbezit, aanspeelbaar staan.",
+    progressions: "Maximaal 2× raken.",
+    simplifications: "Minder passes voor een punt (4).",
+    aids: [
+      smallGoal(12, 0), smallGoal(38, 0), smallGoal(12, 35), smallGoal(38, 35),
+      ...rowP(25, 8, 4, 36), P(18, 15), P(32, 15), P(25, 13), P(25, 18),
+      ...rowP(25, 27, 4, 36, "O"), O(18, 21), O(32, 21), O(25, 23), O(25, 25),
+      ball(26.4, 13),
+    ],
+    actions: [pass([25, 13], [19, 8], "rondspelen"), pass([19, 8], [31, 8], "verplaatsen")],
+  },
+  {
+    title: "Linie-partij 6-tegen-6 op klein doel",
+    type: "MATCHFORM", theme: "NEUTRAL", ageMin: 13, ageMax: 19,
+    fieldType: "HALF", footprintX: 44, footprintY: 32,
+    minPlayers: 10, idealPlayers: 12, maxPlayers: 14, durationMin: 18,
+    description: "Partij zonder keepers op kleine doelen; ideaal om linies en onderlinge afstanden te trainen.",
+    setup: "Veld met een klein doel aan elke korte zijde, geen keepers. Twee teams van 6, opgesteld in linies.",
+    steps: [
+      "Speel een normale partij op de twee kleine doelen.",
+      "Houd je linies (verdediging – middenveld) op goede onderlinge afstand.",
+      "Schuif als team mee met de bal, samen op en samen terug.",
+      "Bij balverlies eerst je linie herstellen, dan pas druk.",
+    ],
+    rules: "Geen speler mag uit zijn linie wegblijven bij balverlies.",
+    coachingPoints: "Organisatie in linies, onderlinge afstanden, omschakelen.",
+    progressions: "Voeg een themaregel toe (bijv. alleen scoren na een spelverplaatsing).",
+    simplifications: "Groter veld voor meer ruimte tussen de linies.",
+    aids: [
+      smallGoal(22, 0), smallGoal(22, 32),
+      ...rowP(22, 9, 3, 32), P(14, 15), P(30, 15), P(22, 13),
+      ...rowP(22, 23, 3, 32, "O"), O(14, 17), O(30, 17), O(22, 19),
+      ball(23.4, 13),
+    ],
+    actions: [pass([22, 13], [38, 9], "verplaatsen"), run([22, 9], [22, 12], "linie schuift")],
+  },
 ];
+
+// KNVB sub-theme (leerdoel) per drill title. See SUB_THEMES in lib/enums.
+const SUB_THEME_BY_TITLE: Record<string, string> = {
+  // ATTACK
+  "Afwerken via de 1-2": "Scoren verbeteren",
+  "Dieptepass en voorzet afronden": "Creëren van kansen",
+  "Partij 6-6 met accent op diepte": "Dieptespel in opbouw verbeteren",
+  "Positiespel 4-tegen-2 naar een klein doel": "Positiespel in opbouw verbeteren",
+  "Combineren en afronden op groot doel": "Scoren verbeteren",
+  "Partij met accent aanvallen 7-tegen-7": "Creëren van kansen",
+  "Positiespel 5-tegen-3 met kantspelers": "Positiespel in opbouw verbeteren",
+  "Aanvallen over de flank met voorzet": "Creëren van kansen",
+  "Passeren en scoren 2-tegen-1": "Uitspelen van één tegen één situatie verbeteren",
+  "Overtal aanvallen 4-tegen-3 naar groot doel": "Creëren van kansen",
+  "Combineren door het centrum": "Dieptespel in opbouw verbeteren",
+  "Dieptepass en inloop 4-tegen-2": "Dieptespel in opbouw verbeteren",
+  // DEFEND
+  "Druk zetten 3-tegen-3 met steunpunten": "Storen en veroveren van de bal verbeteren",
+  "Zone verdedigen 4-tegen-4": "Verdedigen van dieptespel verbeteren",
+  "1-tegen-1 verdedigen naar twee doeltjes": "Verdedigen van één tegen één situatie verbeteren",
+  "Kantelen in de linie 4-tegen-2": "Verdedigen wanneer de tegenstander kansen creëert verbeteren",
+  "Verdedigen van de voorzet": "Voorkomen van doelpunten verbeteren",
+  "Compact blok 6-tegen-4": "Verdedigen wanneer de tegenstander kansen creëert verbeteren",
+  "Onderscheppen en uitverdedigen 4-tegen-4": "Storen en veroveren van de bal verbeteren",
+  "Duel om de tweede bal": "Storen en veroveren van de bal verbeteren",
+  "Partij met accent verdedigen 7-tegen-7": "Storen en veroveren van de bal verbeteren",
+  // TRANSITION
+  "Omschakelen 4-tegen-4 op vier doeltjes": "Omschakelen bij veroveren van de bal verbeteren",
+  "Counteren na balwinst — 3v3 + spits": "Omschakelen bij veroveren van de bal verbeteren",
+  "Balverovering en snel scoren": "Omschakelen bij veroveren van de bal verbeteren",
+  "Omschakelen 3-tegen-3-tegen-3": "Omschakelen op moment van balverlies verbeteren",
+  "Counter na hoge druk": "Omschakelen bij veroveren van de bal verbeteren",
+  "Snelle omschakeling naar de flanken": "Omschakelen bij veroveren van de bal verbeteren",
+  "Positiespel met omschakelmoment": "Omschakelen op moment van balverlies verbeteren",
+  "Twee kleuren omschakelspel": "Omschakelen bij veroveren van de bal verbeteren",
+  "Partij met omschakelaccent 8-tegen-8": "Omschakelen bij veroveren van de bal verbeteren",
+  // NEUTRAL
+  "Passruit — pass en volg": "Passen en aannemen",
+  "Passen en bewegen in het vierkant": "Passen en aannemen",
+  "Tikspel met bal — iedereen aan de bal": "Balgewenning en baltechniek",
+  "Rondo 5-tegen-2": "Positiespel en balbezit",
+  "Dribbelparcours met richtingsveranderingen": "Dribbelen en richtingsverandering",
+  "Passen in tweetallen met beweging": "Passen en aannemen",
+  "Dynamische warming-up met bal": "Warming-up en activeren",
+  "Partij 8-tegen-8 op grote doelen": "Partijspel (vrije wedstrijdvorm)",
+  "Positiepartij 8-tegen-8 op balbezit": "Positiespel en balbezit",
+  "Linie-partij 6-tegen-6 op klein doel": "Partijspel (vrije wedstrijdvorm)",
+};
+
+// Final library: sub-theme applied + any overlapping figures nudged apart.
+export const SEED_DRILLS: SeedDrill[] = RAW_SEED_DRILLS.map((d) => ({
+  ...d,
+  subTheme: d.subTheme ?? SUB_THEME_BY_TITLE[d.title],
+  aids: declutter(d.aids, d.footprintX, d.footprintY),
+}));

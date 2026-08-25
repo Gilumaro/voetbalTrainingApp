@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getDrill } from "@/lib/drills";
-import PitchDiagram from "@/components/PitchDiagram";
+import { getDrill, drillSteps } from "@/lib/drills";
+import AnimatedPitchDiagram from "@/components/AnimatedPitchDiagram";
+import DiagramLegend from "@/components/DiagramLegend";
 import MaterialsList from "@/components/MaterialsList";
 import { stationTally } from "@/lib/materials";
 import { deleteDrill } from "../actions";
@@ -42,6 +43,11 @@ export default async function DrillDetailPage({ params }: PageProps<"/bibliothee
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-600">
               {FIELD_TYPE_LABELS[drill.fieldType as FieldType]}
             </span>
+            {drill.subTheme && (
+              <span className="rounded-full bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700">
+                {drill.subTheme}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex gap-2">
@@ -61,8 +67,9 @@ export default async function DrillDetailPage({ params }: PageProps<"/bibliothee
       <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-4">
-            <PitchDiagram footprintX={drill.footprintX} footprintY={drill.footprintY} aids={drill.aids} scale={7} className="w-full" />
+            <AnimatedPitchDiagram footprintX={drill.footprintX} footprintY={drill.footprintY} aids={drill.aids} actions={drill.actions} scale={7} className="w-full" />
           </div>
+          <DiagramLegend aids={drill.aids} actions={drill.actions} />
           <MaterialsList tally={stationTally(drill, drill.idealPlayers)} title={`Benodigd materiaal (bij ${drill.idealPlayers} spelers)`} />
         </div>
 
@@ -75,6 +82,9 @@ export default async function DrillDetailPage({ params }: PageProps<"/bibliothee
           </dl>
 
           <Prose title="Omschrijving" text={drill.description} />
+          {drill.setup && <Prose title="Opstelling" text={drill.setup} />}
+          <Steps steps={drillSteps(drill.steps)} />
+          {drill.rules && <Prose title="Spelregels" text={drill.rules} />}
           {drill.coachingPoints && <Prose title="Coachpunten" text={drill.coachingPoints} />}
           {drill.progressions && <Prose title="Moeilijker maken" text={drill.progressions} />}
           {drill.simplifications && <Prose title="Makkelijker maken" text={drill.simplifications} />}
@@ -96,6 +106,20 @@ function Meta({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs text-zinc-500">{label}</dt>
       <dd className="font-medium text-zinc-900">{value}</dd>
+    </div>
+  );
+}
+
+function Steps({ steps }: { steps: string[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4">
+      <h2 className="text-sm font-semibold text-zinc-700">Stappen</h2>
+      <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm text-zinc-700">
+        {steps.map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ol>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getDrill } from "@/lib/drills";
+import { getDrill, drillSteps } from "@/lib/drills";
 import DrillForm from "@/components/DrillForm";
 import { updateDrill } from "../../actions";
 import type { AidType } from "@/lib/enums";
@@ -31,6 +31,7 @@ export default async function DrillEditPage({
           title: drill.title,
           type: drill.type,
           theme: drill.theme,
+          subTheme: drill.subTheme,
           ageMin: drill.ageMin,
           ageMax: drill.ageMax,
           fieldType: drill.fieldType,
@@ -42,6 +43,9 @@ export default async function DrillEditPage({
           durationMin: drill.durationMin,
           ballScaling: drill.ballScaling,
           description: drill.description,
+          setup: drill.setup,
+          steps: drillSteps(drill.steps),
+          rules: drill.rules,
           coachingPoints: drill.coachingPoints,
           progressions: drill.progressions,
           simplifications: drill.simplifications,
@@ -51,6 +55,14 @@ export default async function DrillEditPage({
             x: a.x,
             y: a.y,
             rotation: a.rotation,
+            label: a.label,
+          })),
+          actions: drill.actions.map((a) => ({
+            kind: a.kind,
+            fromX: a.fromX,
+            fromY: a.fromY,
+            toX: a.toX,
+            toY: a.toY,
             label: a.label,
           })),
         }}

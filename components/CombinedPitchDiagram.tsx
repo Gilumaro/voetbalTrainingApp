@@ -1,31 +1,39 @@
-import { AidGlyph, type DiagramAid } from "./PitchDiagram";
+import { ActionArrow, AidGlyph, orderAids, type DiagramAction, type DiagramAid } from "./PitchDiagram";
 
 export type StationShape = {
   footprintX: number;
   footprintY: number;
   aids: DiagramAid[];
+  actions?: DiagramAction[];
   label?: string;
 };
 
 /**
  * Fit a station's footprint into an available WxH box, rotating 90° (CCW) when the
- * natural orientation doesn't fit but the rotated one does. Aid coordinates are
- * transformed to match: (x, y) → (y, fx - x).
+ * natural orientation doesn't fit but the rotated one does. Aid AND action
+ * coordinates are transformed to match: (x, y) → (y, fx - x).
  */
 function orient(
   station: StationShape,
   availW: number,
   availH: number,
-): { fx: number; fy: number; aids: DiagramAid[] } {
-  const { footprintX: fx, footprintY: fy, aids } = station;
+): { fx: number; fy: number; aids: DiagramAid[]; actions: DiagramAction[] } {
+  const { footprintX: fx, footprintY: fy, aids, actions = [] } = station;
   const e = 0.01;
   const naturalFits = fx <= availW + e && fy <= availH + e;
   const rotatedFits = fy <= availW + e && fx <= availH + e;
-  if (naturalFits || !rotatedFits) return { fx, fy, aids };
+  if (naturalFits || !rotatedFits) return { fx, fy, aids, actions };
   return {
     fx: fy,
     fy: fx,
     aids: aids.map((a) => ({ ...a, x: a.y, y: fx - a.x })),
+    actions: actions.map((a) => ({
+      ...a,
+      fromX: a.fromY,
+      fromY: fx - a.fromX,
+      toX: a.toY,
+      toY: fx - a.toX,
+    })),
   };
 }
 
@@ -57,7 +65,7 @@ export default function CombinedPitchDiagram({
   function renderStation(station: StationShape, offsetXm: number, tint: string) {
     // Orient the footprint so it fits within its half (rotate 90° if needed),
     // so the two stations never overlap on the pitch.
-    const { fx, fy, aids } = orient(station, halfW, availY);
+    const { fx, fy, aids, actions } = orient(station, halfW, availY);
     const ox = offsetXm + Math.max(0, (halfW - fx) / 2);
     const oy = Math.max(0, (availY - fy) / 2);
     const mx = (x: number) => pad + (ox + x) * scale;
@@ -75,7 +83,17 @@ export default function CombinedPitchDiagram({
           strokeDasharray="4 3"
           rx={3}
         />
-        {aids.map((a, i) => (
+        {actions.map((a, i) => (
+          <ActionArrow
+            key={`act-${i}`}
+            action={a}
+            x1={mx(a.fromX)}
+            y1={my(a.fromY)}
+            x2={mx(a.toX)}
+            y2={my(a.toY)}
+          />
+        ))}
+        {orderAids(aids).map(({ aid: a, i }) => (
           <AidGlyph key={i} aid={a} cx={mx(a.x)} cy={my(a.y)} scale={scale} fx={fx} fy={fy} />
         ))}
       </g>

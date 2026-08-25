@@ -18,6 +18,7 @@ model Drill {
   title           String
   type            String // WARMUP | EXERCISE | MATCHFORM
   theme           String // ATTACK | DEFEND | TRANSITION | NEUTRAL
+  subTheme        String? // KNVB leerdoel within the theme (Dutch label; see lib/enums SUB_THEMES)
   ageMin          Int      @default(15)
   ageMax          Int      @default(15)
   fieldType       String // CIRCUIT | QUARTER | HALF | FULL | INDOOR
@@ -31,6 +32,10 @@ model Drill {
   // (one per player, e.g. everyone dribbles) | PER_PAIR (one per two players).
   ballScaling     String   @default("FIXED")
   description     String
+  // Structured, coach-readable instructions (all optional/back-compatible):
+  setup           String? // Opstelling: how to lay the field out
+  steps           String? // Stappen: JSON string array of ordered instructions
+  rules           String? // Spelregels
   coachingPoints  String?
   progressions    String?
   simplifications String?
@@ -39,7 +44,26 @@ model Drill {
   updatedAt       DateTime @updatedAt
 
   aids     DrillAid[]
+  actions  DrillAction[]
   stations BlockStation[]
+}
+
+/// An ordered movement within a drill (pass/run/dribble/shot). Feeds the diagram
+/// arrows now and the play-button animation later. Coordinates are in metres
+/// relative to the footprint origin (0,0 = top-left), like DrillAid.
+model DrillAction {
+  id      Int    @id @default(autoincrement())
+  drill   Drill  @relation(fields: [drillId], references: [id], onDelete: Cascade)
+  drillId Int
+  order   Int // play/animation sequence
+  kind    String // PASS | RUN | DRIBBLE | SHOT | CARRY
+  fromX   Float
+  fromY   Float
+  toX     Float
+  toY     Float
+  label   String?
+
+  @@index([drillId])
 }
 
 /// A placed aid (goal/cone/marker) within a drill's footprint. Coordinates are in
