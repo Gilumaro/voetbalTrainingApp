@@ -35,9 +35,11 @@ Break one of these and the output is wrong even if the code compiles. Severity:
   (Stappen), `rules` (Spelregels), plus coaching points and progressions/simplifications, so the
   coach can tell the kids exactly what to do.
 - **DOM-8 (warn) — Every drill has a valid `theme` and `subTheme`.** `subTheme` (KNVB leerdoel)
-  must be a member of `SUB_THEMES[theme]` in `lib/enums.ts`. The four sets (Aanvallen,
-  Verdedigen, Omschakelen, and the Neutraal 6-set) are the source of truth; validate with
-  `zSubTheme`.
+  must be a member of `SUB_THEMES[theme]` in `lib/enums.ts`. The six sets (Aanvallen,
+  Verdedigen, Omschakelen, Neutraal, Standaardsituaties, Conditie / atletisch vermogen) are the
+  source of truth; validate with `zSubTheme`. Note `SET_PIECE` (Standaardsituaties) is a
+  library-only theme — it is intentionally **not** in `SESSION_THEMES`, so the generator never
+  auto-selects it; `CONDITIE` is generator-selectable.
 - **DOM-9 (info) — Original content only.** Author drills in our own words grounded in the KNVB
   method; **no scraping/copying** Rinus/KNVB text, images, or diagrams (§3.1 of the plan).
 

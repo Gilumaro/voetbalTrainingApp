@@ -128,6 +128,122 @@ model BlockStation {
   @@index([drillId])
 }
 
+/// A player in the (single) team's roster.
+model Player {
+  id                Int       @id @default(autoincrement())
+  firstName         String
+  lastName          String?
+  shirtNumber       Int?
+  preferredPosition String // POSITION_CODES (see lib/enums.ts)
+  secondaryPosition String? // optional POSITION_CODES
+  birthDate         DateTime?
+  active            Boolean   @default(true)
+  notes             String? // quick free-text remark
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  comments              PlayerComment[]
+  attendance            Attendance[]
+  lineupEntries         LineupEntry[]
+  lineupTemplateEntries LineupTemplateEntry[]
+}
+
+/// A dated remark about a player (running log).
+model PlayerComment {
+  id       Int      @id @default(autoincrement())
+  player   Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  playerId Int
+  date     DateTime @default(now())
+  text     String
+
+  @@index([playerId])
+}
+
+/// A standalone training date, against which attendance is recorded.
+model TrainingEvent {
+  id        Int      @id @default(autoincrement())
+  date      DateTime
+  label     String?
+  createdAt DateTime @default(now())
+
+  attendance Attendance[]
+}
+
+/// One attendance row per (training event, player): present + who cleaned up.
+model Attendance {
+  id         Int           @id @default(autoincrement())
+  event      TrainingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId    Int
+  player     Player        @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  playerId   Int
+  present    Boolean       @default(true)
+  didCleanup Boolean       @default(false)
+
+  @@unique([eventId, playerId])
+  @@index([eventId])
+  @@index([playerId])
+}
+
+/// A Saturday match (opponent + date) that a lineup is built for.
+model Match {
+  id        Int      @id @default(autoincrement())
+  date      DateTime
+  opponent  String
+  homeAway  String   @default("THUIS") // THUIS | UIT
+  formation String   @default("4-3-3") // FORMATION key (see lib/formations.ts)
+  location  String?
+  result    String? // free text, e.g. "3-1"
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lineup LineupEntry[]
+}
+
+/// One row per player considered for a match: availability role + pitch placement.
+model LineupEntry {
+  id       Int    @id @default(autoincrement())
+  match    Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  matchId  Int
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  playerId Int
+  role     String @default("BENCH") // STARTER | BENCH | UNAVAILABLE
+  x        Float? // pitch position in metres (starters placed by drag)
+  y        Float?
+  slot     Int? // formation slot index the player occupies
+
+  @@unique([matchId, playerId])
+  @@index([matchId])
+  @@index([playerId])
+}
+
+/// Singleton (id = 1): the coach's default/first-choice lineup, used to pre-fill a
+/// new match's builder. Set by "save as default" on any built lineup.
+model LineupTemplate {
+  id        Int      @id @default(1)
+  formation String   @default("4-3-3")
+  updatedAt DateTime @updatedAt
+
+  entries LineupTemplateEntry[]
+}
+
+/// One placed player in the default lineup (metres, like LineupEntry).
+model LineupTemplateEntry {
+  id         Int            @id @default(autoincrement())
+  template   LineupTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId Int
+  player     Player         @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  playerId   Int
+  role       String         @default("STARTER")
+  x          Float?
+  y          Float?
+  slot       Int?
+
+  @@unique([templateId, playerId])
+  @@index([templateId])
+  @@index([playerId])
+}
+
 /// Singleton (id = 1): the coach's materials inventory and default pitch size.
 model Settings {
   id         Int      @id @default(1)

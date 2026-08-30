@@ -11,16 +11,27 @@ export const DRILL_TYPE_LABELS: Record<DrillType, string> = {
   MATCHFORM: "Partijvorm",
 };
 
-export const THEMES = ["ATTACK", "DEFEND", "TRANSITION", "NEUTRAL"] as const;
+export const THEMES = [
+  "ATTACK",
+  "DEFEND",
+  "TRANSITION",
+  "NEUTRAL",
+  "SET_PIECE",
+  "CONDITIE",
+] as const;
 export type Theme = (typeof THEMES)[number];
 export const THEME_LABELS: Record<Theme, string> = {
   ATTACK: "Aanvallen",
   DEFEND: "Verdedigen",
   TRANSITION: "Omschakelen",
   NEUTRAL: "Neutraal",
+  SET_PIECE: "Standaardsituaties",
+  CONDITIE: "Conditie / atletisch vermogen",
 };
-// Themes a coach can pick for a whole session (NEUTRAL is only for warm-ups etc.)
-export const SESSION_THEMES = ["ATTACK", "DEFEND", "TRANSITION"] as const;
+// Themes a coach can pick for a whole session (NEUTRAL is only for warm-ups etc.;
+// SET_PIECE is library-only — set pieces need the full goal/pitch and have no partijvorm,
+// so they don't fit the auto-generator's shape and are added to sessions by hand).
+export const SESSION_THEMES = ["ATTACK", "DEFEND", "TRANSITION", "CONDITIE"] as const;
 
 // Sub-themes (KNVB leerdoelen) per main theme. The Dutch label is the stored value.
 export const SUB_THEMES: Record<Theme, string[]> = {
@@ -50,6 +61,22 @@ export const SUB_THEMES: Record<Theme, string[]> = {
     "Positiespel en balbezit",
     "Warming-up en activeren",
     "Partijspel (vrije wedstrijdvorm)",
+  ],
+  SET_PIECE: [
+    "Aanvallende hoekschop",
+    "Verdedigen van de hoekschop",
+    "Aanvallende vrije trap",
+    "Verdedigen van de vrije trap",
+    "Strafschop nemen en verdedigen",
+    "Inworp",
+    "Aftrap",
+  ],
+  CONDITIE: [
+    "Uithoudingsvermogen met bal",
+    "Snelheid en acceleratie",
+    "Coördinatie en wendbaarheid",
+    "Kracht en stabiliteit",
+    "Loopscholing en activeren",
   ],
 };
 export const ALL_SUB_THEMES = Array.from(new Set(Object.values(SUB_THEMES).flat()));
@@ -159,6 +186,90 @@ export type StationGroup = (typeof STATION_GROUPS)[number];
 export const STATION_SIDES = ["FULL", "LEFT", "RIGHT"] as const;
 export type StationSide = (typeof STATION_SIDES)[number];
 
+// ---- Team / player positions ----------------------------------------------
+// Granular position codes, shared by a player's preferred position and by the
+// slots of a formation (see lib/formations.ts), so the lineup builder can hint.
+export const POSITION_CODES = [
+  "GK",
+  "LB",
+  "LCB",
+  "CB",
+  "RCB",
+  "RB",
+  "LWB",
+  "RWB",
+  "DM",
+  "CM",
+  "LM",
+  "RM",
+  "AM",
+  "LW",
+  "RW",
+  "ST",
+] as const;
+export type PositionCode = (typeof POSITION_CODES)[number];
+export const POSITION_LABELS: Record<PositionCode, string> = {
+  GK: "Keeper",
+  LB: "Linksback",
+  LCB: "Centrale verdediger (links)",
+  CB: "Centrale verdediger",
+  RCB: "Centrale verdediger (rechts)",
+  RB: "Rechtsback",
+  LWB: "Linkervleugelverdediger",
+  RWB: "Rechtervleugelverdediger",
+  DM: "Verdedigende middenvelder",
+  CM: "Centrale middenvelder",
+  LM: "Linkshalf",
+  RM: "Rechtshalf",
+  AM: "Aanvallende middenvelder",
+  LW: "Linksbuiten",
+  RW: "Rechtsbuiten",
+  ST: "Spits",
+};
+
+// Four lines, for grouping/colour in the roster and lineup views.
+export const POSITION_LINES = ["KEEPER", "VERDEDIGING", "MIDDENVELD", "AANVAL"] as const;
+export type PositionLine = (typeof POSITION_LINES)[number];
+export const POSITION_LINE_LABELS: Record<PositionLine, string> = {
+  KEEPER: "Keeper",
+  VERDEDIGING: "Verdediging",
+  MIDDENVELD: "Middenveld",
+  AANVAL: "Aanval",
+};
+export const POSITION_LINE: Record<PositionCode, PositionLine> = {
+  GK: "KEEPER",
+  LB: "VERDEDIGING",
+  LCB: "VERDEDIGING",
+  CB: "VERDEDIGING",
+  RCB: "VERDEDIGING",
+  RB: "VERDEDIGING",
+  LWB: "VERDEDIGING",
+  RWB: "VERDEDIGING",
+  DM: "MIDDENVELD",
+  CM: "MIDDENVELD",
+  LM: "MIDDENVELD",
+  RM: "MIDDENVELD",
+  AM: "MIDDENVELD",
+  LW: "AANVAL",
+  RW: "AANVAL",
+  ST: "AANVAL",
+};
+
+export const HOME_AWAY = ["THUIS", "UIT"] as const;
+export type HomeAway = (typeof HOME_AWAY)[number];
+export const HOME_AWAY_LABELS: Record<HomeAway, string> = {
+  THUIS: "Thuis",
+  UIT: "Uit",
+};
+
+export const LINEUP_ROLES = ["STARTER", "BENCH", "UNAVAILABLE"] as const;
+export type LineupRole = (typeof LINEUP_ROLES)[number];
+export const LINEUP_ROLE_LABELS: Record<LineupRole, string> = {
+  STARTER: "Basis",
+  BENCH: "Wissel",
+  UNAVAILABLE: "Niet beschikbaar",
+};
+
 // ---- Zod helpers -----------------------------------------------------------
 export const zDrillType = z.enum(DRILL_TYPES);
 export const zTheme = z.enum(THEMES);
@@ -171,3 +282,6 @@ export const zActionKind = z.enum(ACTION_KINDS);
 export const zSubTheme = z.string().refine((v) => ALL_SUB_THEMES.includes(v), {
   message: "Onbekend sub-thema",
 });
+export const zPositionCode = z.enum(POSITION_CODES);
+export const zHomeAway = z.enum(HOME_AWAY);
+export const zLineupRole = z.enum(LINEUP_ROLES);

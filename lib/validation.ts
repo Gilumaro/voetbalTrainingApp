@@ -5,9 +5,13 @@ import {
   zBallScaling,
   zDrillType,
   zFieldType,
+  zHomeAway,
+  zLineupRole,
+  zPositionCode,
   zSubTheme,
   zTheme,
 } from "./enums";
+import { FORMATION_KEYS } from "./formations";
 
 const emptyToUndef = (v: unknown) =>
   typeof v === "string" && v.trim() === "" ? undefined : v;
@@ -75,6 +79,120 @@ export const drillSchema = z
   });
 
 export type DrillInput = z.infer<typeof drillSchema>;
+
+// ---- Team / players --------------------------------------------------------
+
+export const playerSchema = z.object({
+  firstName: z.string().trim().min(1, "Voornaam ontbreekt").max(60),
+  lastName: z.preprocess(emptyToUndef, z.string().trim().max(60).optional()),
+  shirtNumber: z.preprocess(
+    emptyToUndef,
+    z.coerce.number().int().min(1).max(99).optional(),
+  ),
+  preferredPosition: zPositionCode,
+  secondaryPosition: z.preprocess(emptyToUndef, zPositionCode.optional()),
+  birthDate: z.preprocess(emptyToUndef, z.coerce.date().optional()),
+  active: z.preprocess((v) => v === "on" || v === "true" || v === true, z.boolean()),
+  notes: z.preprocess(emptyToUndef, z.string().trim().max(2000).optional()),
+});
+
+export type PlayerInput = z.infer<typeof playerSchema>;
+
+export function parsePlayerForm(formData: FormData): PlayerInput {
+  const raw = Object.fromEntries(formData) as Record<string, unknown>;
+  return playerSchema.parse(raw);
+}
+
+export const playerCommentSchema = z.object({
+  text: z.string().trim().min(1, "Opmerking ontbreekt").max(2000),
+});
+
+export type PlayerCommentInput = z.infer<typeof playerCommentSchema>;
+
+export function parsePlayerCommentForm(formData: FormData): PlayerCommentInput {
+  return playerCommentSchema.parse(Object.fromEntries(formData));
+}
+
+// ---- Attendance ------------------------------------------------------------
+
+export const trainingEventSchema = z.object({
+  date: z.coerce.date(),
+  label: z.preprocess(emptyToUndef, z.string().trim().max(120).optional()),
+});
+
+export type TrainingEventInput = z.infer<typeof trainingEventSchema>;
+
+export function parseTrainingEventForm(formData: FormData): TrainingEventInput {
+  return trainingEventSchema.parse(Object.fromEntries(formData));
+}
+
+export const attendanceRowSchema = z.object({
+  playerId: z.coerce.number().int().positive(),
+  present: z.coerce.boolean(),
+  didCleanup: z.coerce.boolean(),
+});
+
+export const attendanceSchema = z.array(attendanceRowSchema).default([]);
+
+export type AttendanceRowInput = z.infer<typeof attendanceRowSchema>;
+
+export function parseAttendanceForm(formData: FormData): AttendanceRowInput[] {
+  return attendanceSchema.parse(parseJson(formData, "attendance"));
+}
+
+// ---- Matches & lineups -----------------------------------------------------
+
+export const matchSchema = z.object({
+  date: z.coerce.date(),
+  opponent: z.string().trim().min(1, "Tegenstander ontbreekt").max(120),
+  homeAway: zHomeAway.default("THUIS"),
+  formation: z.string().refine((v) => FORMATION_KEYS.includes(v), {
+    message: "Onbekende opstelling",
+  }),
+  location: z.preprocess(emptyToUndef, z.string().trim().max(120).optional()),
+  result: z.preprocess(emptyToUndef, z.string().trim().max(40).optional()),
+  notes: z.preprocess(emptyToUndef, z.string().trim().max(2000).optional()),
+});
+
+export type MatchInput = z.infer<typeof matchSchema>;
+
+export function parseMatchForm(formData: FormData): MatchInput {
+  return matchSchema.parse(Object.fromEntries(formData));
+}
+
+export const lineupEntrySchema = z.object({
+  playerId: z.coerce.number().int().positive(),
+  role: zLineupRole,
+  x: z.number().min(0).max(120).nullable().optional(),
+  y: z.number().min(0).max(120).nullable().optional(),
+  slot: z.number().int().min(0).nullable().optional(),
+});
+
+export const lineupSchema = z.array(lineupEntrySchema).default([]);
+
+export type LineupEntryInput = z.infer<typeof lineupEntrySchema>;
+
+export function parseLineupForm(formData: FormData): LineupEntryInput[] {
+  return lineupSchema.parse(parseJson(formData, "lineup"));
+}
+
+export const defaultLineupSchema = z.object({
+  formation: z.string().refine((v) => FORMATION_KEYS.includes(v), {
+    message: "Onbekende opstelling",
+  }),
+});
+
+/** Default-lineup form: a formation + the placed starters from the lineup JSON. */
+export function parseDefaultLineupForm(formData: FormData): {
+  formation: string;
+  entries: LineupEntryInput[];
+} {
+  const { formation } = defaultLineupSchema.parse({
+    formation: formData.get("formation"),
+  });
+  const entries = parseLineupForm(formData).filter((e) => e.role === "STARTER");
+  return { formation, entries };
+}
 
 function parseJson(formData: FormData, field: string): unknown {
   try {

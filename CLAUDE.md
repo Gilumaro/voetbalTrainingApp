@@ -41,6 +41,27 @@ npx prisma migrate dev --name x   # create+apply a migration (auto-generates cli
 npx prisma generate               # regenerate client after a schema change if types look stale
 ```
 
+## After a change — always tell me the deploy command
+
+The app is self-hosted with Docker + a **volume-backed SQLite** file (`training-data` →
+`/data/app.db`), which is **separate** from the local dev DB (`file:./dev.db`). So a change
+that works in `npm run dev` does **not** automatically reach the running container.
+
+**At the end of any change, state which of these the coach must run (or "no deploy step
+needed"). Never leave it implied.** Pick by what changed:
+
+| What changed | Local dev | Docker instance (LAN) |
+| --- | --- | --- |
+| Code / UI only (no DB) | hot reload, nothing | `docker compose up -d --build` |
+| `schema.prisma` (new migration) | `npx prisma migrate dev` + `npx prisma generate` | `docker compose up -d --build` (entrypoint runs `migrate deploy`); **no `-v`** |
+| `SEED_DRILLS` / `scripts/seed.ts` (seed content) | `npm run seed` (wipes+reseeds dev) | `docker compose down -v && docker compose up -d --build` — **`-v` wipes the volume**; confirm first [DOM-16] |
+| Additive drill data (`lib/imported-drills.ts`) | `npm run import-drills` | `docker compose up -d --build` **then** `docker compose exec app npm run import-drills` |
+
+Notes: `-v` **destroys** the volume DB (all coach-created data) — only for a deliberate
+reseed, and confirm before suggesting it. A plain `up -d --build` rebuilds the image but
+leaves the volume (and its data) intact; it will **not** insert new rows on its own — data
+changes need the matching `seed`/`import-drills` step run against the target DB.
+
 ## Non-negotiables (the short list — details in docs/guidelines)
 
 1. **Read the Next.js docs first.** This is Next 16; APIs differ from memory. Consult

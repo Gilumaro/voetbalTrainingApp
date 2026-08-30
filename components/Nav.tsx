@@ -7,6 +7,8 @@ const LINKS = [
   { href: "/genereren", label: "Genereren" },
   { href: "/bibliotheek", label: "Bibliotheek" },
   { href: "/trainingen", label: "Trainingen" },
+  { href: "/team", label: "Team" },
+  { href: "/wedstrijden", label: "Wedstrijden" },
   { href: "/instellingen", label: "Instellingen" },
 ];
 
