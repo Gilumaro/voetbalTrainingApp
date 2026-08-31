@@ -37,18 +37,31 @@ export default function SessionDraftView({
   availY: number;
 }) {
   const total = draft.blocks.reduce((sum, b) => sum + b.durationMin, 0);
+  const target = draft.input.durationMin;
+  const overBudget = total > target;
   // "Gather beforehand" = the most any single block needs at once (gear is reused
   // between blocks, so this is the max per material, not the sum).
   const sessionTally = maxTally(
     draft.blocks.map((b) => mergeTallies(...b.stations.map((s) => stationTally(s.drill, s.players)))),
   );
 
+  const warnings = [...draft.warnings];
+  if (overBudget) {
+    warnings.push(
+      `De onderdelen duren samen ${total} min — dat is ${total - target} min langer dan het ingestelde tijdvak van ${target} min.`,
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-zinc-200 bg-white p-5">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-zinc-600">
           <span><strong className="text-zinc-900">Thema:</strong> {THEME_LABELS[draft.input.theme as Theme]}</span>
-          <span><strong className="text-zinc-900">Duur:</strong> {total} min</span>
+          <span>
+            <strong className="text-zinc-900">Duur:</strong>{" "}
+            <span className={overBudget ? "font-semibold text-amber-700" : ""}>{total} min</span>
+            {total !== target && <span className="text-zinc-400"> / tijdvak {target} min</span>}
+          </span>
           <span><strong className="text-zinc-900">Spelers:</strong> {draft.input.players}</span>
           <span><strong className="text-zinc-900">Leeftijd:</strong> {draft.input.ageCategory}</span>
         </div>
@@ -57,11 +70,11 @@ export default function SessionDraftView({
 
       <MaterialsList tally={sessionTally} title="Verzamel vooraf (totaal benodigd materiaal)" />
 
-      {draft.warnings.length > 0 && (
+      {warnings.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 no-print">
           <p className="text-sm font-semibold text-amber-800">Let op</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-amber-800">
-            {draft.warnings.map((w, i) => (
+            {warnings.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
           </ul>

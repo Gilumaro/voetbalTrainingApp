@@ -91,6 +91,41 @@ export async function renameSession(sessionId: number, formData: FormData) {
   revalidatePath(`/trainingen/${sessionId}`);
 }
 
+/** Add an extra whole-group drill block to the end of a session. */
+export async function addBlock(sessionId: number, formData: FormData) {
+  const drillId = Number(formData.get("drillId"));
+  if (!drillId) return;
+  const drill = await prisma.drill.findUnique({ where: { id: drillId } });
+  if (!drill) return;
+
+  const dur = clamp(Number(formData.get("dur")) || drill.durationMin || 15, 1, 60);
+  const last = await prisma.sessionBlock.aggregate({
+    where: { sessionId },
+    _max: { order: true },
+  });
+  const order = (last._max.order ?? -1) + 1;
+
+  await prisma.sessionBlock.create({
+    data: {
+      sessionId,
+      order,
+      kind: "WHOLE",
+      durationMin: dur,
+      label: drill.title,
+      stations: {
+        create: [{ order: 0, group: "ALL", side: "FULL", drillId }],
+      },
+    },
+  });
+  revalidatePath(`/trainingen/${sessionId}`);
+}
+
+/** Remove a block (and its stations, via cascade) from a session. */
+export async function deleteBlock(sessionId: number, blockId: number) {
+  await prisma.sessionBlock.delete({ where: { id: blockId } });
+  revalidatePath(`/trainingen/${sessionId}`);
+}
+
 export async function setBlockDuration(sessionId: number, blockId: number, formData: FormData) {
   const dur = clamp(Number(formData.get("dur")) || 1, 1, 60);
   await prisma.sessionBlock.update({ where: { id: blockId }, data: { durationMin: dur } });

@@ -11,6 +11,8 @@ import {
   moveBlock,
   swapStationDrill,
   rerollStation,
+  addBlock,
+  deleteBlock,
 } from "../actions";
 import { DRILL_TYPE_LABELS, type DrillType } from "@/lib/enums";
 
@@ -108,6 +110,7 @@ function RefinePanel({
             const setDur = setBlockDuration.bind(null, sessionId, b.id);
             const up = moveBlock.bind(null, sessionId, b.id, "up");
             const down = moveBlock.bind(null, sessionId, b.id, "down");
+            const del = deleteBlock.bind(null, sessionId, b.id);
             return (
               <li key={b.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2">
                 <span className="w-6 text-sm text-zinc-400">{i + 1}</span>
@@ -120,10 +123,12 @@ function RefinePanel({
                 </form>
                 <form action={up}><button className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-50" disabled={i === 0}>↑</button></form>
                 <form action={down}><button className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-50" disabled={i === session.blocks.length - 1}>↓</button></form>
+                <form action={del}><button className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50" title="Blok verwijderen">✕</button></form>
               </li>
             );
           })}
         </ul>
+        <AddBlockForm sessionId={sessionId} session={session} allDrills={allDrills} />
       </div>
 
       {/* Per-station drill swap / reroll / nudge */}
@@ -166,5 +171,56 @@ function RefinePanel({
         </ul>
       </div>
     </section>
+  );
+}
+
+function AddBlockForm({
+  sessionId,
+  session,
+  allDrills,
+}: {
+  sessionId: number;
+  session: SavedSession;
+  allDrills: { id: number; title: string; type: string; theme: string }[];
+}) {
+  const add = addBlock.bind(null, sessionId);
+  const total = session.blocks.reduce((sum, b) => sum + b.durationMin, 0);
+  const remaining = session.durationMin - total;
+  // Suggest filling the remaining time window, but never a nonsensical value.
+  const defaultDur = remaining > 0 ? Math.min(remaining, 30) : 15;
+  const types: DrillType[] = ["WARMUP", "EXERCISE", "MATCHFORM"];
+
+  return (
+    <form action={add} className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3">
+      <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs font-medium text-zinc-500">
+        Extra oefening toevoegen
+        <select name="drillId" required defaultValue=""
+          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-800">
+          <option value="" disabled>Kies een oefening…</option>
+          {types.map((t) => {
+            const group = allDrills.filter((d) => d.type === t);
+            if (group.length === 0) return null;
+            return (
+              <optgroup key={t} label={DRILL_TYPE_LABELS[t]}>
+                {group.map((d) => (
+                  <option key={d.id} value={d.id}>{d.title}</option>
+                ))}
+              </optgroup>
+            );
+          })}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
+        Duur
+        <span className="flex items-center gap-1">
+          <input type="number" name="dur" min={1} max={60} defaultValue={defaultDur}
+            className="w-16 rounded border border-zinc-300 px-2 py-1 text-sm" />
+          <span className="text-xs text-zinc-500">min</span>
+        </span>
+      </label>
+      <button className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700">
+        + Toevoegen
+      </button>
+    </form>
   );
 }

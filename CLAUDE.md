@@ -56,6 +56,12 @@ that pulled source), so every deploy is:
 2. **On the server (SSH session):** `cd` to the repo, `git pull`, then run the matching
    command from the **Remote server** column below.
 
+> **Service name on the server is `voetbalapp`, not `app`.** The committed
+> `docker-compose.yml` names the service `app`, but the coach's server compose renames it,
+> so `docker compose exec`/`run` on the server target **`voetbalapp`** (e.g.
+> `sudo docker compose exec voetbalapp npm run import-drills`). Commands also need `sudo`
+> there. The table below uses `app`; substitute `voetbalapp` for the real server.
+
 **At the end of any change, state which of these the coach must run (or "no deploy step
 needed"). Never leave it implied.** Pick by what changed:
 
