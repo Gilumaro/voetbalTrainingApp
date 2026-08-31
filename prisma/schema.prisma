@@ -21,7 +21,7 @@ model Drill {
   subTheme        String? // KNVB leerdoel within the theme (Dutch label; see lib/enums SUB_THEMES)
   ageMin          Int      @default(15)
   ageMax          Int      @default(15)
-  fieldType       String // CIRCUIT | QUARTER | HALF | FULL | INDOOR
+  fieldType       String // CIRCUIT | QUARTER | HALF | FULL | INDOOR | PRACTICE
   footprintX      Float // required width in metres
   footprintY      Float // required length in metres
   minPlayers      Int
@@ -90,7 +90,7 @@ model Session {
   theme       String
   durationMin Int
   players     Int
-  spaceType   String // HALF | QUARTER | FULL | INDOOR
+  spaceType   String // HALF | QUARTER | FULL | INDOOR | PRACTICE
   notes       String?
   createdAt   DateTime @default(now())
 

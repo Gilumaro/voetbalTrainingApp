@@ -47,10 +47,19 @@ The app is self-hosted with Docker + a **volume-backed SQLite** file (`training-
 `/data/app.db`), which is **separate** from the local dev DB (`file:./dev.db`). So a change
 that works in `npm run dev` does **not** automatically reach the running container.
 
+**The remote server is updated by hand, every time — nothing auto-deploys.** The server
+pulls the code over git via SSH (`build: .` in `docker-compose.yml` builds the image from
+that pulled source), so every deploy is:
+
+1. **From this dev machine:** commit + push the change (I don't push unless asked — remind
+   the coach it's a prerequisite).
+2. **On the server (SSH session):** `cd` to the repo, `git pull`, then run the matching
+   command from the **Remote server** column below.
+
 **At the end of any change, state which of these the coach must run (or "no deploy step
 needed"). Never leave it implied.** Pick by what changed:
 
-| What changed | Local dev | Docker instance (LAN) |
+| What changed | Local dev | Remote server (after `ssh` → `git pull`) |
 | --- | --- | --- |
 | Code / UI only (no DB) | hot reload, nothing | `docker compose up -d --build` |
 | `schema.prisma` (new migration) | `npx prisma migrate dev` + `npx prisma generate` | `docker compose up -d --build` (entrypoint runs `migrate deploy`); **no `-v`** |
@@ -60,7 +69,8 @@ needed"). Never leave it implied.** Pick by what changed:
 Notes: `-v` **destroys** the volume DB (all coach-created data) — only for a deliberate
 reseed, and confirm before suggesting it. A plain `up -d --build` rebuilds the image but
 leaves the volume (and its data) intact; it will **not** insert new rows on its own — data
-changes need the matching `seed`/`import-drills` step run against the target DB.
+changes need the matching `seed`/`import-drills` step run against the target DB. The
+`git pull` only moves code, never the volume DB, so drill/seed steps still run separately.
 
 ## Non-negotiables (the short list — details in docs/guidelines)
 

@@ -81,7 +81,7 @@ export const SUB_THEMES: Record<Theme, string[]> = {
 };
 export const ALL_SUB_THEMES = Array.from(new Set(Object.values(SUB_THEMES).flat()));
 
-export const FIELD_TYPES = ["CIRCUIT", "QUARTER", "HALF", "FULL", "INDOOR"] as const;
+export const FIELD_TYPES = ["CIRCUIT", "QUARTER", "HALF", "FULL", "INDOOR", "PRACTICE"] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   CIRCUIT: "Circuit",
@@ -89,6 +89,8 @@ export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   HALF: "Half veld",
   FULL: "Heel veld",
   INDOOR: "Zaal",
+  // The club's extra long, narrow strip (15 m wide × 60 m long).
+  PRACTICE: "Oefenveld (veld 1/2)",
 };
 
 export const AID_TYPES = [
@@ -116,13 +118,15 @@ export const AID_TYPE_LABELS: Record<AidType, string> = {
 // Player-like aids (drawn on top so their letters stay visible above cones/lines).
 export const PLAYER_AID_TYPES: AidType[] = ["PLAYER", "PLAYER_OPP"];
 
-export const SPACE_TYPES = ["HALF", "QUARTER", "FULL", "INDOOR"] as const;
+export const SPACE_TYPES = ["HALF", "QUARTER", "FULL", "INDOOR", "PRACTICE"] as const;
 export type SpaceType = (typeof SPACE_TYPES)[number];
 export const SPACE_TYPE_LABELS: Record<SpaceType, string> = {
   HALF: "Half veld",
   QUARTER: "Kwart veld",
   FULL: "Heel veld",
   INDOOR: "Zaal",
+  // Fixed-size club field (15 × 60 m); see FIXED_SPACE_DIMS in lib/settings.ts.
+  PRACTICE: "Oefenveld (veld 1/2)",
 };
 
 export const AGE_CATEGORIES = [
