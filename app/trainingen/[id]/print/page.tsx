@@ -15,6 +15,12 @@ export default async function PrintPage({ params }: PageProps<"/trainingen/[id]/
   const settings = await getSettings();
   const draft = sessionToDraft(session);
   const title = session.label ?? `Training #${session.id}`;
+  const dateLabel = session.date.toLocaleDateString("nl-NL", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 
   return (
     <div className="space-y-4">
@@ -25,7 +31,7 @@ export default async function PrintPage({ params }: PageProps<"/trainingen/[id]/
         <PrintButton />
       </div>
 
-      <PrintSessionView draft={draft} title={title} {...spaceDims(settings.pitchX, settings.pitchY, session.spaceType)} />
+      <PrintSessionView draft={draft} title={title} dateLabel={dateLabel} {...spaceDims(settings.pitchX, settings.pitchY, session.spaceType)} />
     </div>
   );
 }

@@ -20,11 +20,13 @@ const sideLabel = (side?: string) => (side === "LEFT" ? "links" : side === "RIGH
 export default function PrintSessionView({
   draft,
   title,
+  dateLabel,
   availX,
   availY,
 }: {
   draft: SessionDraft;
   title: string;
+  dateLabel?: string;
   availX: number;
   availY: number;
 }) {
@@ -38,6 +40,7 @@ export default function PrintSessionView({
     <div className="space-y-5 text-zinc-900">
       <header className="border-b border-zinc-300 pb-3">
         <h1 className="text-2xl font-bold">{title}</h1>
+        {dateLabel && <p className="mt-0.5 text-sm font-medium text-zinc-700">{dateLabel}</p>}
         <p className="mt-1 text-sm text-zinc-600">
           {THEME_LABELS[draft.input.theme as Theme]} · {draft.input.ageCategory} ·{" "}
           {draft.input.players} spelers · {total} min

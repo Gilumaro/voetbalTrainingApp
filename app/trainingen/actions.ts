@@ -17,7 +17,7 @@ import {
   type SpaceType,
   type Theme,
 } from "@/lib/enums";
-import { parseAttendanceForm } from "@/lib/validation";
+import { parseAttendanceForm, parseSessionDate } from "@/lib/validation";
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -46,11 +46,13 @@ function defaultLabel(input: GeneratorInput): string {
 export async function saveGenerated(formData: FormData) {
   const input = inputFromForm(formData);
   const seed = Number(formData.get("seed")) || 1;
+  const date = parseSessionDate(formData.get("date")) ?? new Date();
   const ctx = await loadGeneratorContext();
   const draft = generateSession(input, ctx, seed);
 
   const created = await prisma.session.create({
     data: {
+      date,
       ageCategory: input.ageCategory,
       theme: input.theme,
       durationMin: input.durationMin,
@@ -108,6 +110,14 @@ export async function renameSession(sessionId: number, formData: FormData) {
   const label = String(formData.get("label") ?? "").trim().slice(0, 120) || null;
   await prisma.session.update({ where: { id: sessionId }, data: { label } });
   revalidatePath(`/trainingen/${sessionId}`);
+}
+
+export async function setSessionDate(sessionId: number, formData: FormData) {
+  const date = parseSessionDate(formData.get("date"));
+  if (!date) return;
+  await prisma.session.update({ where: { id: sessionId }, data: { date } });
+  revalidatePath(`/trainingen/${sessionId}`);
+  revalidatePath("/trainingen");
 }
 
 /** Add an extra whole-group drill block to the end of a session. */

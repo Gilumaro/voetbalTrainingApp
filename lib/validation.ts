@@ -115,6 +115,12 @@ export function parsePlayerCommentForm(formData: FormData): PlayerCommentInput {
 
 // ---- Attendance ------------------------------------------------------------
 
+/** Parse a <input type="date"> value into a Date, or null when absent/invalid. */
+export function parseSessionDate(value: FormDataEntryValue | null): Date | null {
+  const parsed = z.coerce.date().safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export const attendanceRowSchema = z.object({
   playerId: z.coerce.number().int().positive(),
   present: z.coerce.boolean(),

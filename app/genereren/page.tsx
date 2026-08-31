@@ -116,6 +116,8 @@ async function Result({
   const ctx = await loadGeneratorContext();
   const draft = generateSession(input, ctx, seed);
   const { availX, availY } = spaceDims(ctx.settings.pitchX, ctx.settings.pitchY, input.spaceType);
+  // Date is not a generation input; keep the picked date across "Opnieuw" but default to today.
+  const dateValue = typeof sp.date === "string" ? sp.date : new Date().toISOString().slice(0, 10);
 
   // "Opnieuw" keeps inputs but forces a new seed.
   const params = new URLSearchParams({
@@ -135,13 +137,18 @@ async function Result({
           <Link href={`/genereren?${params.toString()}`} className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
             ↻ Opnieuw genereren
           </Link>
-          <form action={saveGenerated}>
+          <form action={saveGenerated} className="flex items-center gap-2">
             <input type="hidden" name="age" value={input.ageCategory} />
             <input type="hidden" name="theme" value={input.theme} />
             <input type="hidden" name="duration" value={input.durationMin} />
             <input type="hidden" name="players" value={input.players} />
             <input type="hidden" name="space" value={input.spaceType} />
             <input type="hidden" name="seed" value={seed} />
+            <label className="flex items-center gap-1 text-sm text-zinc-600">
+              <span className="font-medium">Datum</span>
+              <input type="date" name="date" defaultValue={dateValue}
+                className="rounded-lg border border-zinc-300 px-2 py-2 text-sm" />
+            </label>
             <button type="submit" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
               Bewaren & aanpassen
             </button>

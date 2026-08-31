@@ -10,6 +10,7 @@ import AttendanceEditor, { type AttendancePlayer } from "@/components/Attendance
 import {
   deleteSession,
   renameSession,
+  setSessionDate,
   setBlockDuration,
   moveBlock,
   swapStationDrill,
@@ -38,6 +39,8 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
   const draft = sessionToDraft(session);
   const del = deleteSession.bind(null, sessionId);
   const rename = renameSession.bind(null, sessionId);
+  const setDate = setSessionDate.bind(null, sessionId);
+  const dateValue = session.date.toISOString().slice(0, 10);
 
   // Default everyone to present until the coach records who was absent.
   const recorded = new Map(attendance.map((a) => [a.playerId, a]));
@@ -64,6 +67,16 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
               className="w-72 max-w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-lg font-semibold text-zinc-900" />
             <button type="submit" className="rounded-md border border-zinc-300 px-2 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50">
               Naam opslaan
+            </button>
+          </form>
+          <form action={setDate} className="mt-2 flex items-center gap-2">
+            <label className="text-sm text-zinc-600">
+              <span className="mr-1 font-medium">Datum</span>
+              <input type="date" name="date" defaultValue={dateValue}
+                className="rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
+            </label>
+            <button type="submit" className="rounded-md border border-zinc-300 px-2 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50">
+              Datum opslaan
             </button>
           </form>
         </div>

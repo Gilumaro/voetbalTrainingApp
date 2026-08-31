@@ -36,7 +36,11 @@ export default async function TrainingenPage() {
                   </p>
                 </div>
                 <span className="text-sm text-zinc-400">
-                  {new Date(s.createdAt).toLocaleDateString("nl-NL")}
+                  {new Date(s.date).toLocaleDateString("nl-NL", {
+                    weekday: "short",
+                    day: "numeric",
+                    month: "long",
+                  })}
                 </span>
               </Link>
             </li>
