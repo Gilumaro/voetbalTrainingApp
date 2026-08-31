@@ -94,7 +94,8 @@ model Session {
   notes       String?
   createdAt   DateTime @default(now())
 
-  blocks SessionBlock[]
+  blocks     SessionBlock[]
+  attendance Attendance[]
 }
 
 /// A time-block within a session: whole-group or a split (two parallel stations).
@@ -159,28 +160,18 @@ model PlayerComment {
   @@index([playerId])
 }
 
-/// A standalone training date, against which attendance is recorded.
-model TrainingEvent {
-  id        Int      @id @default(autoincrement())
-  date      DateTime
-  label     String?
-  createdAt DateTime @default(now())
-
-  attendance Attendance[]
-}
-
-/// One attendance row per (training event, player): present + who cleaned up.
+/// One attendance row per (saved training session, player): present + who cleaned up.
 model Attendance {
-  id         Int           @id @default(autoincrement())
-  event      TrainingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  eventId    Int
-  player     Player        @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  id         Int      @id @default(autoincrement())
+  session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId  Int
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
   playerId   Int
-  present    Boolean       @default(true)
-  didCleanup Boolean       @default(false)
+  present    Boolean  @default(true)
+  didCleanup Boolean  @default(false)
 
-  @@unique([eventId, playerId])
-  @@index([eventId])
+  @@unique([sessionId, playerId])
+  @@index([sessionId])
   @@index([playerId])
 }
 

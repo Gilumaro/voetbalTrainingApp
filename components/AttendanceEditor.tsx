@@ -15,16 +15,16 @@ export type AttendancePlayer = {
  * it to a hidden JSON input on submit, mirroring how DrillForm posts its aids.
  */
 export default function AttendanceEditor({
-  eventId,
+  sessionId,
   players,
   action,
 }: {
-  eventId: number;
+  sessionId: number;
   players: AttendancePlayer[];
-  action: (eventId: number, formData: FormData) => void | Promise<void>;
+  action: (sessionId: number, formData: FormData) => void | Promise<void>;
 }) {
   const [rows, setRows] = useState<AttendancePlayer[]>(players);
-  const bound = action.bind(null, eventId);
+  const bound = action.bind(null, sessionId);
 
   function toggle(playerId: number, field: "present" | "didCleanup") {
     setRows((prev) =>

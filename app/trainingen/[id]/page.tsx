@@ -3,7 +3,10 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getSession, sessionToDraft, type SavedSession, type SavedStation } from "@/lib/sessions";
 import { getSettings, spaceDims } from "@/lib/settings";
+import { getSessionAttendance } from "@/lib/attendance";
+import { getPlayers, playerName } from "@/lib/players";
 import SessionDraftView from "@/components/SessionDraftView";
+import AttendanceEditor, { type AttendancePlayer } from "@/components/AttendanceEditor";
 import {
   deleteSession,
   renameSession,
@@ -13,6 +16,7 @@ import {
   rerollStation,
   addBlock,
   deleteBlock,
+  saveAttendance,
 } from "../actions";
 import { DRILL_TYPE_LABELS, type DrillType } from "@/lib/enums";
 
@@ -24,14 +28,29 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
   const session = await getSession(sessionId);
   if (!session) notFound();
 
-  const [settings, allDrills] = await Promise.all([
+  const [settings, allDrills, players, attendance] = await Promise.all([
     getSettings(),
     prisma.drill.findMany({ orderBy: { title: "asc" } }),
+    getPlayers({ activeOnly: true }),
+    getSessionAttendance(sessionId),
   ]);
 
   const draft = sessionToDraft(session);
   const del = deleteSession.bind(null, sessionId);
   const rename = renameSession.bind(null, sessionId);
+
+  // Default everyone to present until the coach records who was absent.
+  const recorded = new Map(attendance.map((a) => [a.playerId, a]));
+  const attendanceRows: AttendancePlayer[] = players.map((p) => {
+    const rec = recorded.get(p.id);
+    return {
+      playerId: p.id,
+      name: playerName(p),
+      shirtNumber: p.shirtNumber,
+      present: rec ? rec.present : true,
+      didCleanup: rec ? rec.didCleanup : false,
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -64,6 +83,20 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
       <SessionDraftView draft={draft} {...spaceDims(settings.pitchX, settings.pitchY, session.spaceType)} />
 
       <RefinePanel session={session} sessionId={sessionId} allDrills={allDrills} />
+
+      <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-5 no-print">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-900">Aanwezigheid & opruimen</h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            Vink af wie er was en wie heeft opgeruimd. Telt mee in het{" "}
+            <Link href="/team/overzicht" className="text-emerald-700 hover:underline">
+              teamoverzicht
+            </Link>
+            .
+          </p>
+        </div>
+        <AttendanceEditor sessionId={sessionId} players={attendanceRows} action={saveAttendance} />
+      </section>
     </div>
   );
 }

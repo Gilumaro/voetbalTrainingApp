@@ -17,6 +17,7 @@ import {
   type SpaceType,
   type Theme,
 } from "@/lib/enums";
+import { parseAttendanceForm } from "@/lib/validation";
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -77,6 +78,24 @@ export async function saveGenerated(formData: FormData) {
 
   revalidatePath("/trainingen");
   redirect(`/trainingen/${created.id}`);
+}
+
+/** Record who was present and who cleaned up for this training. Replaces the lot. */
+export async function saveAttendance(sessionId: number, formData: FormData) {
+  const rows = parseAttendanceForm(formData);
+  await prisma.$transaction([
+    prisma.attendance.deleteMany({ where: { sessionId } }),
+    prisma.attendance.createMany({
+      data: rows.map((r) => ({
+        sessionId,
+        playerId: r.playerId,
+        present: r.present,
+        didCleanup: r.didCleanup,
+      })),
+    }),
+  ]);
+  revalidatePath(`/trainingen/${sessionId}`);
+  revalidatePath("/team/overzicht");
 }
 
 export async function deleteSession(sessionId: number) {

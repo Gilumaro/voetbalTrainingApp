@@ -4,10 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import {
-  parseAttendanceForm,
   parsePlayerCommentForm,
   parsePlayerForm,
-  parseTrainingEventForm,
 } from "@/lib/validation";
 
 // ---- Players ---------------------------------------------------------------
@@ -44,38 +42,3 @@ export async function deletePlayerComment(id: number, playerId: number) {
   revalidatePath(`/team/${playerId}`);
 }
 
-// ---- Training events & attendance ------------------------------------------
-
-export async function createTrainingEvent(formData: FormData) {
-  const data = parseTrainingEventForm(formData);
-  const created = await prisma.trainingEvent.create({ data });
-  revalidatePath("/team/aanwezigheid");
-  redirect(`/team/aanwezigheid/${created.id}`);
-}
-
-export async function deleteTrainingEvent(id: number) {
-  await prisma.trainingEvent.delete({ where: { id } });
-  revalidatePath("/team/aanwezigheid");
-  revalidatePath("/team/overzicht");
-  redirect("/team/aanwezigheid");
-}
-
-export async function saveAttendance(eventId: number, formData: FormData) {
-  const rows = parseAttendanceForm(formData);
-  // Replace the whole event's attendance in one go (mirrors updateDrill's child swap).
-  await prisma.$transaction([
-    prisma.attendance.deleteMany({ where: { eventId } }),
-    prisma.attendance.createMany({
-      data: rows.map((r) => ({
-        eventId,
-        playerId: r.playerId,
-        present: r.present,
-        didCleanup: r.didCleanup,
-      })),
-    }),
-  ]);
-  revalidatePath(`/team/aanwezigheid/${eventId}`);
-  revalidatePath("/team/aanwezigheid");
-  revalidatePath("/team/overzicht");
-  redirect("/team/aanwezigheid");
-}

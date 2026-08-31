@@ -17,12 +17,6 @@ export default async function TeamPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            href="/team/aanwezigheid"
-            className="rounded-lg border border-zinc-300 px-4 py-2.5 font-medium text-zinc-700 hover:bg-zinc-50"
-          >
-            Aanwezigheid
-          </Link>
-          <Link
             href="/team/overzicht"
             className="rounded-lg border border-zinc-300 px-4 py-2.5 font-medium text-zinc-700 hover:bg-zinc-50"
           >

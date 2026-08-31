@@ -115,17 +115,6 @@ export function parsePlayerCommentForm(formData: FormData): PlayerCommentInput {
 
 // ---- Attendance ------------------------------------------------------------
 
-export const trainingEventSchema = z.object({
-  date: z.coerce.date(),
-  label: z.preprocess(emptyToUndef, z.string().trim().max(120).optional()),
-});
-
-export type TrainingEventInput = z.infer<typeof trainingEventSchema>;
-
-export function parseTrainingEventForm(formData: FormData): TrainingEventInput {
-  return trainingEventSchema.parse(Object.fromEntries(formData));
-}
-
 export const attendanceRowSchema = z.object({
   playerId: z.coerce.number().int().positive(),
   present: z.coerce.boolean(),

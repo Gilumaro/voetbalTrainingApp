@@ -1,25 +1,13 @@
 import { prisma } from "./prisma";
 import { playerName } from "./players";
 
-export async function listTrainingEvents() {
-  return prisma.trainingEvent.findMany({
-    orderBy: { date: "desc" },
-    include: { _count: { select: { attendance: true } } },
+/** Attendance/cleanup rows recorded against a saved training session. */
+export async function getSessionAttendance(sessionId: number) {
+  return prisma.attendance.findMany({
+    where: { sessionId },
+    include: { player: true },
   });
 }
-
-export async function getTrainingEvent(id: number) {
-  return prisma.trainingEvent.findUnique({
-    where: { id },
-    include: {
-      attendance: { include: { player: true } },
-    },
-  });
-}
-
-export type TrainingEventWithAttendance = NonNullable<
-  Awaited<ReturnType<typeof getTrainingEvent>>
->;
 
 export type OverviewRow = {
   playerId: number;
