@@ -10,8 +10,10 @@ import {
   type DiagramAid,
 } from "./PitchDiagram";
 
-// Actions where the moving token is the ball; RUN moves a player instead.
-const BALL_KINDS = new Set(["PASS", "SHOT", "CARRY", "DRIBBLE"]);
+// Actions where the ball token moves.
+const BALL_KINDS = new Set(["PASS", "SHOT"]);
+// Actions where the nearest player moves to the endpoint (carry/dribble = player moves with the ball).
+const PLAYER_MOVE_KINDS = new Set(["RUN", "CARRY", "DRIBBLE"]);
 
 type Seg = { action: DiagramAction; start: number; dur: number };
 
@@ -66,7 +68,7 @@ export default function AnimatedPitchDiagram({
   const actionToPlayer = useMemo<number[]>(() => {
     const curPos = aids.map(a => ({ x: a.x, y: a.y }));
     return actions.map(action => {
-      if (action.kind !== "RUN") return -1;
+      if (!PLAYER_MOVE_KINDS.has(action.kind)) return -1;
       let best = -1, bestDist = 3; // 3 m proximity threshold
       aids.forEach((aid, j) => {
         if (!isPlayerAid(aid.type)) return;

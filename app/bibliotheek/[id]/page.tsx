@@ -66,14 +66,6 @@ export default async function DrillDetailPage({ params }: PageProps<"/bibliothee
 
       <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-white p-4">
-            <AnimatedPitchDiagram footprintX={drill.footprintX} footprintY={drill.footprintY} aids={drill.aids} actions={drill.actions} scale={7} className="w-full" />
-          </div>
-          <DiagramLegend aids={drill.aids} actions={drill.actions} />
-          <MaterialsList tally={stationTally(drill, drill.idealPlayers)} title={`Benodigd materiaal (bij ${drill.idealPlayers} spelers)`} />
-        </div>
-
-        <div className="space-y-4">
           <dl className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm sm:grid-cols-3">
             <Meta label="Spelers" value={`${drill.minPlayers}–${drill.maxPlayers} (ideaal ${drill.idealPlayers})`} />
             <Meta label="Duur" value={`${drill.durationMin} min`} />
@@ -95,6 +87,14 @@ export default async function DrillDetailPage({ params }: PageProps<"/bibliothee
             </a>
           )}
           <p className="text-xs text-zinc-400">Leerdoel U15: {AGE_GOAL.U15}</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-xl border border-zinc-200 bg-white p-4">
+            <AnimatedPitchDiagram footprintX={drill.footprintX} footprintY={drill.footprintY} aids={drill.aids} actions={drill.actions} scale={7} className="w-full" />
+          </div>
+          <DiagramLegend aids={drill.aids} actions={drill.actions} />
+          <MaterialsList tally={stationTally(drill, drill.idealPlayers)} title={`Benodigd materiaal (bij ${drill.idealPlayers} spelers)`} />
         </div>
       </div>
     </div>
