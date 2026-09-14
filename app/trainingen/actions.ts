@@ -18,6 +18,7 @@ import {
   type Theme,
 } from "@/lib/enums";
 import { parseAttendanceForm, parseSessionDate } from "@/lib/validation";
+import { getSettings } from "@/lib/settings";
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -264,4 +265,124 @@ export async function saveStationPlacement(sessionId: number, stationId: number,
     data: { placementOverrides: overrides },
   });
   redirect(`/trainingen/${sessionId}`);
+}
+
+// ---------------------------------------------------------------------------
+// Season generation
+// ---------------------------------------------------------------------------
+
+function currentSeasonRange(): { start: Date; end: Date } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const startYear = now.getMonth() >= 7 ? year : year - 1;
+  return {
+    start: new Date(startYear, 7, 1),   // Aug 1
+    end:   new Date(startYear + 1, 5, 30), // Jun 30
+  };
+}
+
+/** Bulk-create empty sessions for every configured training day in the current season. */
+export async function generateSeasonTrainings() {
+  const settings = await getSettings();
+
+  let trainingDays: number[] = [];
+  try {
+    const parsed = JSON.parse(settings.trainingDays);
+    if (Array.isArray(parsed)) trainingDays = parsed as number[];
+  } catch { /* ignore */ }
+
+  if (trainingDays.length === 0) {
+    revalidatePath("/trainingen");
+    return;
+  }
+
+  const { start, end } = currentSeasonRange();
+
+  // Fetch existing session dates in the season as YYYY-MM-DD strings for deduplication.
+  const existing = await prisma.session.findMany({
+    where: { date: { gte: start, lte: end } },
+    select: { date: true },
+  });
+  const existingDates = new Set(
+    existing.map((s) => s.date.toISOString().slice(0, 10)),
+  );
+
+  const toCreate: Date[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    if (trainingDays.includes(cursor.getDay())) {
+      const iso = cursor.toISOString().slice(0, 10);
+      if (!existingDates.has(iso)) {
+        toCreate.push(new Date(cursor));
+      }
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  if (toCreate.length > 0) {
+    await prisma.session.createMany({
+      data: toCreate.map((date) => ({
+        date,
+        label: null,
+        ageCategory: settings.defaultAgeCategory,
+        theme: "ATTACK",
+        durationMin: settings.defaultDurationMin,
+        players: settings.defaultPlayers,
+        spaceType: settings.defaultSpaceType,
+      })),
+    });
+  }
+
+  revalidatePath("/trainingen");
+}
+
+/** Delete a session and stay on the overview (no redirect). */
+export async function deleteSessionFromList(sessionId: number) {
+  await prisma.session.delete({ where: { id: sessionId } });
+  revalidatePath("/trainingen");
+}
+
+// ---------------------------------------------------------------------------
+// Generate / regenerate drills for an existing session
+// ---------------------------------------------------------------------------
+
+/** Generate (or regenerate) drills for an already-persisted session. */
+export async function generateDrillsForSession(sessionId: number, formData: FormData) {
+  const input = inputFromForm(formData);
+  const seed = Number(formData.get("seed")) || Math.floor(Math.random() * 1_000_000);
+  const ctx = await loadGeneratorContext();
+  const draft = generateSession(input, ctx, seed);
+
+  await prisma.$transaction([
+    prisma.sessionBlock.deleteMany({ where: { sessionId } }),
+    prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        ageCategory: input.ageCategory,
+        theme: input.theme,
+        durationMin: input.durationMin,
+        players: input.players,
+        spaceType: input.spaceType,
+        blocks: {
+          create: draft.blocks.map((b, i) => ({
+            order: i,
+            kind: b.kind,
+            durationMin: b.durationMin,
+            label: b.label,
+            stations: {
+              create: b.stations.map((st, j) => ({
+                order: j,
+                group: st.group,
+                side: st.side,
+                drillId: st.drill.id,
+              })),
+            },
+          })),
+        },
+      },
+    }),
+  ]);
+
+  revalidatePath(`/trainingen/${sessionId}`);
+  revalidatePath("/trainingen");
 }

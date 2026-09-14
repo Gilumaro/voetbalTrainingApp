@@ -18,8 +18,18 @@ import {
   addBlock,
   deleteBlock,
   saveAttendance,
+  generateDrillsForSession,
 } from "../actions";
-import { DRILL_TYPE_LABELS, type DrillType } from "@/lib/enums";
+import {
+  DRILL_TYPE_LABELS,
+  SESSION_THEMES,
+  THEME_LABELS,
+  AGE_CATEGORIES,
+  SPACE_TYPES,
+  SPACE_TYPE_LABELS,
+  type DrillType,
+  type SpaceType,
+} from "@/lib/enums";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +39,8 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
   const session = await getSession(sessionId);
   if (!session) notFound();
 
+  const isEmpty = session.blocks.length === 0;
+
   const [settings, allDrills, players, attendance] = await Promise.all([
     getSettings(),
     prisma.drill.findMany({ orderBy: { title: "asc" } }),
@@ -36,13 +48,18 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
     getSessionAttendance(sessionId),
   ]);
 
-  const draft = sessionToDraft(session);
   const del = deleteSession.bind(null, sessionId);
   const rename = renameSession.bind(null, sessionId);
   const setDate = setSessionDate.bind(null, sessionId);
+  const genDrills = generateDrillsForSession.bind(null, sessionId);
   const dateValue = session.date.toISOString().slice(0, 10);
 
-  // Default everyone to present until the coach records who was absent.
+  const sessionTitle = session.label ?? new Date(session.date).toLocaleDateString("nl-NL", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+
   const recorded = new Map(attendance.map((a) => [a.playerId, a]));
   const attendanceRows: AttendancePlayer[] = players.map((p) => {
     const rec = recorded.get(p.id);
@@ -63,7 +80,7 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
             ← Alle trainingen
           </Link>
           <form action={rename} className="mt-1 flex items-center gap-2">
-            <input name="label" defaultValue={session.label ?? ""} placeholder="Naam van de training"
+            <input name="label" defaultValue={session.label ?? ""} placeholder={sessionTitle}
               className="w-72 max-w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-lg font-semibold text-zinc-900" />
             <button type="submit" className="rounded-md border border-zinc-300 px-2 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50">
               Naam opslaan
@@ -81,10 +98,12 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
           </form>
         </div>
         <div className="flex gap-2 no-print">
-          <Link href={`/trainingen/${sessionId}/print`}
-            className="rounded-lg border border-zinc-300 px-4 py-2 font-medium text-zinc-700 hover:bg-zinc-50">
-            Print / veldkaart
-          </Link>
+          {!isEmpty && (
+            <Link href={`/trainingen/${sessionId}/print`}
+              className="rounded-lg border border-zinc-300 px-4 py-2 font-medium text-zinc-700 hover:bg-zinc-50">
+              Print / veldkaart
+            </Link>
+          )}
           <form action={del}>
             <button type="submit" className="rounded-lg border border-red-200 px-4 py-2 font-medium text-red-600 hover:bg-red-50">
               Verwijderen
@@ -93,9 +112,34 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
         </div>
       </div>
 
-      <SessionDraftView draft={draft} {...spaceDims(settings.pitchX, settings.pitchY, session.spaceType)} />
+      {isEmpty ? (
+        <DrillGeneratorForm
+          action={genDrills}
+          session={session}
+          mode="generate"
+        />
+      ) : (
+        <>
+          <SessionDraftView
+            draft={sessionToDraft(session)}
+            {...spaceDims(settings.pitchX, settings.pitchY, session.spaceType)}
+          />
 
-      <RefinePanel session={session} sessionId={sessionId} allDrills={allDrills} />
+          <RefinePanel session={session} sessionId={sessionId} allDrills={allDrills} />
+
+          <details className="rounded-xl border border-zinc-200 bg-white no-print">
+            <summary className="cursor-pointer select-none px-5 py-4 text-sm font-semibold text-zinc-700 hover:text-zinc-900">
+              ↻ Oefeningen opnieuw genereren
+            </summary>
+            <div className="border-t border-zinc-100 px-5 pb-5 pt-4">
+              <p className="mb-4 text-sm text-zinc-500">
+                Dit verwijdert alle huidige oefeningen en genereert een nieuw programma op basis van de gekozen parameters.
+              </p>
+              <DrillGeneratorForm action={genDrills} session={session} mode="regenerate" />
+            </div>
+          </details>
+        </>
+      )}
 
       <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-5 no-print">
         <div>
@@ -114,6 +158,86 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
   );
 }
 
+function DrillGeneratorForm({
+  action,
+  session,
+  mode,
+}: {
+  action: (formData: FormData) => Promise<void>;
+  session: SavedSession;
+  mode: "generate" | "regenerate";
+}) {
+  const seed = Math.floor(Math.random() * 1_000_000);
+
+  return (
+    <section className="rounded-xl border border-zinc-200 bg-white p-5 no-print">
+      <h2 className="mb-1 text-lg font-semibold text-zinc-900">
+        {mode === "generate" ? "Oefeningen genereren" : "Parameters"}
+      </h2>
+      {mode === "generate" && (
+        <p className="mb-4 text-sm text-zinc-500">
+          Kies de parameters voor deze training en genereer het programma.
+        </p>
+      )}
+
+      <form action={action} className="space-y-4">
+        <input type="hidden" name="seed" value={seed} />
+
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">Thema</span>
+            <select name="theme" defaultValue={session.theme}
+              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500">
+              {SESSION_THEMES.map((t) => (
+                <option key={t} value={t}>{THEME_LABELS[t]}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">Leeftijdscategorie</span>
+            <select name="age" defaultValue={session.ageCategory}
+              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500">
+              {AGE_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">Beschikbare ruimte</span>
+            <select name="space" defaultValue={session.spaceType}
+              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500">
+              {SPACE_TYPES.map((s) => (
+                <option key={s} value={s}>{SPACE_TYPE_LABELS[s as SpaceType]}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">Duur (min)</span>
+            <input type="number" name="duration" min={30} max={120}
+              defaultValue={session.durationMin}
+              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">Aantal spelers</span>
+            <input type="number" name="players" min={4} max={30}
+              defaultValue={session.players}
+              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+          </label>
+        </div>
+
+        <button type="submit"
+          className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white transition hover:bg-emerald-700">
+          {mode === "generate" ? "Genereer oefeningen" : "Opnieuw genereren"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function RefinePanel({
   session,
   sessionId,
@@ -125,7 +249,6 @@ function RefinePanel({
 }) {
   const firstSplitId = session.blocks.find((b) => b.kind === "SPLIT")?.id;
 
-  // Representative stations: whole-block stations, plus the split stations once.
   const stationControls: { station: SavedStation; context: string }[] = [];
   for (const b of session.blocks) {
     if (b.kind === "SPLIT") {
@@ -148,7 +271,6 @@ function RefinePanel({
     <section className="space-y-5 rounded-xl border border-zinc-200 bg-white p-5 no-print">
       <h2 className="text-lg font-semibold text-zinc-900">Training aanpassen</h2>
 
-      {/* Block order + timing */}
       <div>
         <h3 className="mb-2 text-sm font-semibold text-zinc-600">Blokken & tijd</h3>
         <ul className="space-y-2">
@@ -177,7 +299,6 @@ function RefinePanel({
         <AddBlockForm sessionId={sessionId} session={session} allDrills={allDrills} />
       </div>
 
-      {/* Per-station drill swap / reroll / nudge */}
       <div>
         <h3 className="mb-2 text-sm font-semibold text-zinc-600">Oefeningen wisselen</h3>
         <ul className="space-y-2">
@@ -232,7 +353,6 @@ function AddBlockForm({
   const add = addBlock.bind(null, sessionId);
   const total = session.blocks.reduce((sum, b) => sum + b.durationMin, 0);
   const remaining = session.durationMin - total;
-  // Suggest filling the remaining time window, but never a nonsensical value.
   const defaultDur = remaining > 0 ? Math.min(remaining, 30) : 15;
   const types: DrillType[] = ["WARMUP", "EXERCISE", "MATCHFORM"];
 

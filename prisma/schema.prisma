@@ -235,16 +235,22 @@ model LineupTemplateEntry {
   @@index([playerId])
 }
 
-/// Singleton (id = 1): the coach's materials inventory and default pitch size.
+/// Singleton (id = 1): the coach's materials inventory, default pitch size, and training schedule.
 model Settings {
-  id         Int      @id @default(1)
-  bigGoals   Int      @default(2)
-  smallGoals Int      @default(4)
-  discCones  Int      @default(40)
-  cones      Int      @default(20)
-  pinnies    Int      @default(16)
-  balls      Int      @default(16)
-  pitchX     Float    @default(50) // available width in metres (half-pitch default)
-  pitchY     Float    @default(35) // available length in metres
-  updatedAt  DateTime @updatedAt
+  id                 Int      @id @default(1)
+  bigGoals           Int      @default(2)
+  smallGoals         Int      @default(4)
+  discCones          Int      @default(40)
+  cones              Int      @default(20)
+  pinnies            Int      @default(16)
+  balls              Int      @default(16)
+  pitchX             Float    @default(50) // available width in metres (half-pitch default)
+  pitchY             Float    @default(35) // available length in metres
+  // Training schedule
+  trainingDays       String   @default("[]") // JSON int array: day-of-week (0=Sun…6=Sat)
+  defaultAgeCategory String   @default("U15")
+  defaultDurationMin Int      @default(75)
+  defaultPlayers     Int      @default(16)
+  defaultSpaceType   String   @default("HALF")
+  updatedAt          DateTime @updatedAt
 }
