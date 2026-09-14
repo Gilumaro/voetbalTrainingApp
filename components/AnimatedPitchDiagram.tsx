@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActionArrow,
   AidGlyph,
+  isPlayerAid,
   orderAids,
   type DiagramAction,
   type DiagramAid,
@@ -16,8 +17,9 @@ type Seg = { action: DiagramAction; start: number; dur: number };
 
 /**
  * Animated version of the pitch diagram: the same DrillAction list drives a play
- * button that walks the sequence, tweening a ball along passes/shots/dribbles and a
- * player token along runs. Falls back to a static diagram when there are no actions.
+ * button that walks the sequence, tweening a ball along passes/shots/dribbles and
+ * labelled player glyphs along runs. Falls back to a static diagram when there are
+ * no actions.
  */
 export default function AnimatedPitchDiagram({
   footprintX,
@@ -40,17 +42,41 @@ export default function AnimatedPitchDiagram({
   const mx = (x: number) => pad + x * scale;
   const my = (y: number) => pad + y * scale;
 
+  const [slowMo, setSlowMo] = useState(false);
+  const speedFactor = slowMo ? 0.35 : 1;
+
   // Build a timeline: each action gets a duration based on its length, plus a gap.
-  const gap = 260;
-  const segs: Seg[] = [];
-  let cursor = 0;
-  for (const a of actions) {
-    const dist = Math.hypot(a.toX - a.fromX, a.toY - a.fromY);
-    const dur = Math.max(650, dist * 95);
-    segs.push({ action: a, start: cursor, dur });
-    cursor += dur + gap;
-  }
-  const total = cursor;
+  // Duration and gap are scaled by speedFactor for slow-motion.
+  const segs = useMemo<Seg[]>(() => {
+    const gap = 260 / speedFactor;
+    const result: Seg[] = [];
+    let cursor = 0;
+    for (const a of actions) {
+      const dist = Math.hypot(a.toX - a.fromX, a.toY - a.fromY);
+      const dur = Math.max(650, dist * 95) / speedFactor;
+      result.push({ action: a, start: cursor, dur });
+      cursor += dur + gap;
+    }
+    return result;
+  }, [actions, slowMo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const total = segs.length > 0 ? segs[segs.length - 1].start + segs[segs.length - 1].dur : 0;
+
+  // For each action, which aid index (PLAYER/PLAYER_OPP) is being moved?
+  // Tracks positions through prior RUN actions so matching stays correct.
+  const actionToPlayer = useMemo<number[]>(() => {
+    const curPos = aids.map(a => ({ x: a.x, y: a.y }));
+    return actions.map(action => {
+      if (action.kind !== "RUN") return -1;
+      let best = -1, bestDist = 3; // 3 m proximity threshold
+      aids.forEach((aid, j) => {
+        if (!isPlayerAid(aid.type)) return;
+        const d = Math.hypot(curPos[j].x - action.fromX, curPos[j].y - action.fromY);
+        if (d < bestDist) { bestDist = d; best = j; }
+      });
+      if (best >= 0) curPos[best] = { x: action.toX, y: action.toY };
+      return best;
+    });
+  }, [aids, actions]);
 
   const [playing, setPlaying] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -88,24 +114,46 @@ export default function AnimatedPitchDiagram({
     setElapsed(0);
     setPlaying(true);
   }
+  function toggleSlowMo() {
+    setSlowMo(s => !s);
+    setElapsed(0);
+    setPlaying(false);
+  }
 
   // Which segment are we in, and how far along (eased)?
   const activeIdx = segs.findIndex((s) => elapsed >= s.start && elapsed < s.start + s.dur);
   const started = elapsed > 0;
-  let token: { x: number; y: number; kind: string } | null = null;
+  let ballToken: { x: number; y: number } | null = null;
   if (segs.length > 0) {
     const seg = activeIdx >= 0 ? segs[activeIdx] : elapsed >= total ? segs[segs.length - 1] : segs[0];
     const localRaw =
       activeIdx >= 0 ? (elapsed - seg.start) / seg.dur : elapsed >= total ? 1 : 0;
     const t = ease(localRaw);
     const a = seg.action;
-    token = {
-      x: a.fromX + (a.toX - a.fromX) * t,
-      y: a.fromY + (a.toY - a.fromY) * t,
-      kind: a.kind,
-    };
+    if (playing && BALL_KINDS.has(a.kind)) {
+      ballToken = {
+        x: a.fromX + (a.toX - a.fromX) * t,
+        y: a.fromY + (a.toY - a.fromY) * t,
+      };
+    }
   }
   const highlightIdx = activeIdx >= 0 ? activeIdx : elapsed >= total ? segs.length - 1 : -1;
+
+  // Compute each player's current position based on elapsed time.
+  // Players glide along their assigned RUN actions; other aids stay fixed.
+  const playerPositions: { x: number; y: number }[] = aids.map(a => ({ x: a.x, y: a.y }));
+  if (started) {
+    for (let i = 0; i < segs.length; i++) {
+      const playerIdx = actionToPlayer[i];
+      if (playerIdx < 0 || elapsed < segs[i].start) continue;
+      const t = ease(Math.min(1, (elapsed - segs[i].start) / segs[i].dur));
+      const a = segs[i].action;
+      playerPositions[playerIdx] = {
+        x: a.fromX + (a.toX - a.fromX) * t,
+        y: a.fromY + (a.toY - a.fromY) * t,
+      };
+    }
+  }
 
   return (
     <div className={className}>
@@ -149,21 +197,21 @@ export default function AnimatedPitchDiagram({
             />
           </g>
         ))}
-        {orderAids(aids).map(({ aid: a, i }) => (
-          <AidGlyph key={i} aid={a} cx={mx(a.x)} cy={my(a.y)} scale={scale} fx={footprintX} fy={footprintY} />
-        ))}
-        {/* Moving token */}
-        {playing && token && (
-          BALL_KINDS.has(token.kind) ? (
-            <circle cx={mx(token.x)} cy={my(token.y)} r={5} fill="#ffffff" stroke="#0f172a" strokeWidth={1.5} />
-          ) : (
-            <circle cx={mx(token.x)} cy={my(token.y)} r={6.5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} opacity={0.85} />
-          )
+        {/* Render players at their computed positions; other aids stay fixed. */}
+        {orderAids(aids).map(({ aid: a, i }) => {
+          const pos = started && isPlayerAid(a.type) ? playerPositions[i] : { x: a.x, y: a.y };
+          return (
+            <AidGlyph key={i} aid={a} cx={mx(pos.x)} cy={my(pos.y)} scale={scale} fx={footprintX} fy={footprintY} />
+          );
+        })}
+        {/* Ball token for pass/shot/dribble/carry — player glyphs handle RUN. */}
+        {ballToken && (
+          <circle cx={mx(ballToken.x)} cy={my(ballToken.y)} r={5} fill="#ffffff" stroke="#0f172a" strokeWidth={1.5} />
         )}
       </svg>
 
       {segs.length > 0 && (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
           {playing ? (
             <button
               type="button"
@@ -187,6 +235,17 @@ export default function AnimatedPitchDiagram({
             className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100"
           >
             ↺ Opnieuw
+          </button>
+          <button
+            type="button"
+            onClick={toggleSlowMo}
+            className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
+              slowMo
+                ? "border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                : "border-zinc-300 text-zinc-600 hover:bg-zinc-100"
+            }`}
+          >
+            {slowMo ? "1× Normaal" : "½× Langzaam"}
           </button>
           {highlightIdx >= 0 && actions[highlightIdx]?.label && (
             <span className="text-sm text-zinc-500">
