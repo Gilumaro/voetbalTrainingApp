@@ -35,7 +35,7 @@ export type SavedStation = SavedBlock["stations"][number];
 
 export async function listSessions() {
   return prisma.session.findMany({
-    orderBy: { date: "desc" },
+    orderBy: { date: "asc" },
     include: { blocks: { select: { id: true } } },
   });
 }
