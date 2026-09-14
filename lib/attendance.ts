@@ -1,5 +1,97 @@
 import { prisma } from "./prisma";
 import { playerName } from "./players";
+import { mulberry32, shuffle } from "./rng";
+
+/** Cumulative count of `didCleanup=true` rows per player across all sessions. */
+export async function getCleanupCounts(): Promise<Map<number, number>> {
+  const rows = await prisma.attendance.findMany({
+    where: { didCleanup: true },
+    select: { playerId: true },
+  });
+  const map = new Map<number, number>();
+  for (const row of rows) {
+    map.set(row.playerId, (map.get(row.playerId) ?? 0) + 1);
+  }
+  return map;
+}
+
+type CleanupCandidate = { playerId: number; cleanupCount: number };
+
+/**
+ * Select up to 2 player IDs for cleanup duty, prioritising those with the
+ * lowest cumulative cleanup count. Ties are broken by the supplied seeded RNG.
+ */
+export function pickCleaners(players: CleanupCandidate[], rng: () => number): number[] {
+  if (players.length === 0) return [];
+  const NEEDED = 2;
+  const result: number[] = [];
+  const remaining = [...players];
+
+  while (result.length < NEEDED && remaining.length > 0) {
+    const minCount = Math.min(...remaining.map((p) => p.cleanupCount));
+    const atMin = remaining.filter((p) => p.cleanupCount === minCount);
+    const picked = atMin.length > NEEDED - result.length
+      ? shuffle(atMin, rng).slice(0, NEEDED - result.length)
+      : atMin;
+    for (const p of picked) {
+      result.push(p.playerId);
+      remaining.splice(remaining.findIndex((r) => r.playerId === p.playerId), 1);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Recalculate which players are assigned cleanup for every session from today
+ * onwards (date ≥ midnight today), in chronological order. Past sessions are
+ * left untouched and used as the baseline for cumulative counts.
+ */
+export async function reassignCleanups(): Promise<void> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Baseline: count cleanups from past sessions only
+  const pastRows = await prisma.attendance.findMany({
+    where: { didCleanup: true, session: { date: { lt: today } } },
+    select: { playerId: true },
+  });
+  const counts = new Map<number, number>();
+  for (const row of pastRows) {
+    counts.set(row.playerId, (counts.get(row.playerId) ?? 0) + 1);
+  }
+
+  // Future sessions with their present-player attendance records
+  const futureSessions = await prisma.session.findMany({
+    where: { date: { gte: today } },
+    orderBy: { date: "asc" },
+    include: { attendance: true },
+  });
+
+  for (const session of futureSessions) {
+    if (session.attendance.length === 0) continue;
+
+    const presentPlayers: CleanupCandidate[] = session.attendance
+      .filter((a) => a.present)
+      .map((a) => ({ playerId: a.playerId, cleanupCount: counts.get(a.playerId) ?? 0 }));
+
+    const cleaners = new Set(pickCleaners(presentPlayers, mulberry32(session.id)));
+
+    await prisma.$transaction(
+      session.attendance.map((a) =>
+        prisma.attendance.update({
+          where: { id: a.id },
+          data: { didCleanup: cleaners.has(a.playerId) && a.present },
+        }),
+      ),
+    );
+
+    // Advance counts for the next session in the loop
+    for (const id of cleaners) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+}
 
 /** Attendance/cleanup rows recorded against a saved training session. */
 export async function getSessionAttendance(sessionId: number) {

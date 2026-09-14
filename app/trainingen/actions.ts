@@ -19,6 +19,9 @@ import {
 } from "@/lib/enums";
 import { parseAttendanceForm, parseSessionDate } from "@/lib/validation";
 import { getSettings } from "@/lib/settings";
+import { getCleanupCounts, pickCleaners, reassignCleanups } from "@/lib/attendance";
+import { mulberry32 } from "@/lib/rng";
+import { getPlayers } from "@/lib/players";
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -79,6 +82,24 @@ export async function saveGenerated(formData: FormData) {
     },
   });
 
+  // Auto-assign 2 cleanup players (fewest cleanups first, random tie-break)
+  const activePlayers = await getPlayers({ activeOnly: true });
+  const cleanupCounts = await getCleanupCounts();
+  const pool = activePlayers.map((p) => ({
+    playerId: p.id,
+    cleanupCount: cleanupCounts.get(p.id) ?? 0,
+  }));
+  // XOR offset keeps cleanup RNG independent from the drill-selection RNG
+  const cleaners = new Set(pickCleaners(pool, mulberry32(seed ^ 0xdead)));
+  await prisma.attendance.createMany({
+    data: activePlayers.map((p) => ({
+      sessionId: created.id,
+      playerId: p.id,
+      present: true,
+      didCleanup: cleaners.has(p.id),
+    })),
+  });
+
   revalidatePath("/trainingen");
   redirect(`/trainingen/${created.id}`);
 }
@@ -86,6 +107,13 @@ export async function saveGenerated(formData: FormData) {
 /** Record who was present and who cleaned up for this training. Replaces the lot. */
 export async function saveAttendance(sessionId: number, formData: FormData) {
   const rows = parseAttendanceForm(formData);
+
+  // Detect if a previously-assigned cleaner is now being marked absent
+  const prev = await prisma.attendance.findMany({ where: { sessionId } });
+  const prevCleaners = new Set(prev.filter((a) => a.didCleanup).map((a) => a.playerId));
+  const nowAbsent = new Set(rows.filter((r) => !r.present).map((r) => r.playerId));
+  const triggerReassign = [...prevCleaners].some((id) => nowAbsent.has(id));
+
   await prisma.$transaction([
     prisma.attendance.deleteMany({ where: { sessionId } }),
     prisma.attendance.createMany({
@@ -97,6 +125,12 @@ export async function saveAttendance(sessionId: number, formData: FormData) {
       })),
     }),
   ]);
+
+  if (triggerReassign) {
+    await reassignCleanups();
+    revalidatePath("/trainingen");
+  }
+
   revalidatePath(`/trainingen/${sessionId}`);
   revalidatePath("/team/overzicht");
 }
