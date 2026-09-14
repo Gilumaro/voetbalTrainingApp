@@ -28,9 +28,14 @@ export default function AttendanceEditor({
 
   function toggle(playerId: number, field: "present" | "didCleanup") {
     setRows((prev) =>
-      prev.map((r) =>
-        r.playerId === playerId ? { ...r, [field]: !r[field] } : r,
-      ),
+      prev.map((r) => {
+        if (r.playerId !== playerId) return r;
+        if (field === "present") {
+          const present = !r.present;
+          return { ...r, present, didCleanup: present ? r.didCleanup : false };
+        }
+        return { ...r, [field]: !r[field] };
+      }),
     );
   }
 
@@ -72,7 +77,8 @@ export default function AttendanceEditor({
                     type="checkbox"
                     checked={r.didCleanup}
                     onChange={() => toggle(r.playerId, "didCleanup")}
-                    className="h-4 w-4"
+                    disabled={!r.present}
+                    className="h-4 w-4 disabled:opacity-30"
                   />
                 </td>
               </tr>
