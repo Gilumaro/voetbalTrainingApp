@@ -58,6 +58,17 @@ export default function SessionList({ sessions, deleteAction }: Props) {
 
   return (
     <div className="space-y-3">
+      {past.length > 0 && (
+        <button
+          onClick={() => setShowPast((v) => !v)}
+          className="text-sm text-zinc-500 hover:text-zinc-800 underline underline-offset-2"
+        >
+          {showPast
+            ? "Verberg verleden trainingen"
+            : `Toon ${past.length} verleden training${past.length !== 1 ? "en" : ""}`}
+        </button>
+      )}
+
       <ul className="space-y-2">
         {visible.map((s) => {
           const isPast = new Date(s.date) < today;
@@ -103,16 +114,6 @@ export default function SessionList({ sessions, deleteAction }: Props) {
         })}
       </ul>
 
-      {past.length > 0 && (
-        <button
-          onClick={() => setShowPast((v) => !v)}
-          className="text-sm text-zinc-500 hover:text-zinc-800 underline underline-offset-2"
-        >
-          {showPast
-            ? "Verberg verleden trainingen"
-            : `Toon ${past.length} verleden training${past.length !== 1 ? "en" : ""}`}
-        </button>
-      )}
     </div>
   );
 }
