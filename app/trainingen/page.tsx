@@ -2,10 +2,12 @@ import Link from "next/link";
 import { listSessions } from "@/lib/sessions";
 import { generateSeasonTrainings, deleteSessionFromList } from "./actions";
 import SessionList from "@/components/SessionList";
+import { backfillCleanupAssignments } from "@/lib/attendance";
 
 export const dynamic = "force-dynamic";
 
 export default async function TrainingenPage() {
+  await backfillCleanupAssignments();
   const sessions = await listSessions();
 
   const sessionRows = sessions.map((s) => ({

@@ -93,6 +93,75 @@ export async function reassignCleanups(): Promise<void> {
   }
 }
 
+/**
+ * Assign 2 cleanup players to every session that currently has fewer than 2.
+ * Sessions with no attendance records get records created for all active players
+ * (defaulting to present). Processes chronologically so the fairness counts
+ * accumulate correctly. Idempotent: sessions already at ≥ 2 are skipped.
+ */
+export async function backfillCleanupAssignments(): Promise<void> {
+  const sessions = await prisma.session.findMany({
+    orderBy: { date: "asc" },
+    include: { attendance: true },
+  });
+
+  const needsWork = sessions.some(
+    (s) => s.attendance.filter((a) => a.didCleanup && a.present).length < 2,
+  );
+  if (!needsWork) return;
+
+  const activePlayers = await prisma.player.findMany({
+    where: { active: true },
+    orderBy: [{ shirtNumber: "asc" }, { firstName: "asc" }],
+  });
+
+  const counts = new Map<number, number>();
+
+  for (const session of sessions) {
+    const existingCleaners = session.attendance.filter((a) => a.didCleanup && a.present);
+
+    if (existingCleaners.length >= 2) {
+      for (const c of existingCleaners) {
+        counts.set(c.playerId, (counts.get(c.playerId) ?? 0) + 1);
+      }
+      continue;
+    }
+
+    if (session.attendance.length === 0) {
+      // No attendance records yet — create for all active players and assign cleaners
+      const pool = activePlayers.map((p) => ({
+        playerId: p.id,
+        cleanupCount: counts.get(p.id) ?? 0,
+      }));
+      const chosen = new Set(pickCleaners(pool, mulberry32(session.id)));
+      await prisma.attendance.createMany({
+        data: activePlayers.map((p) => ({
+          sessionId: session.id,
+          playerId: p.id,
+          present: true,
+          didCleanup: chosen.has(p.id),
+        })),
+      });
+      for (const id of chosen) counts.set(id, (counts.get(id) ?? 0) + 1);
+    } else {
+      // Has records but fewer than 2 cleaners — assign from present players
+      const presentPlayers = session.attendance
+        .filter((a) => a.present)
+        .map((a) => ({ playerId: a.playerId, cleanupCount: counts.get(a.playerId) ?? 0 }));
+      const chosen = new Set(pickCleaners(presentPlayers, mulberry32(session.id)));
+      await prisma.$transaction(
+        session.attendance.map((a) =>
+          prisma.attendance.update({
+            where: { id: a.id },
+            data: { didCleanup: chosen.has(a.playerId) && a.present },
+          }),
+        ),
+      );
+      for (const id of chosen) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+}
+
 /** Attendance/cleanup rows recorded against a saved training session. */
 export async function getSessionAttendance(sessionId: number) {
   return prisma.attendance.findMany({
