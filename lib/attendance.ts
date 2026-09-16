@@ -185,9 +185,12 @@ export type OverviewRow = {
  * fewest cleanups first (the fairness view for assigning the next cleanup duty).
  */
 export async function getAttendanceOverview(): Promise<OverviewRow[]> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const players = await prisma.player.findMany({
     orderBy: [{ active: "desc" }, { firstName: "asc" }],
-    include: { attendance: true },
+    include: { attendance: { where: { session: { date: { lt: today } } } } },
   });
 
   const rows: OverviewRow[] = players.map((p) => {
