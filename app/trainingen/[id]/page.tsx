@@ -71,6 +71,9 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
       didCleanup: rec ? rec.didCleanup : false,
     };
   });
+  // Key changes on every save (delete+recreate gives new IDs; reassign changes didCleanup),
+  // forcing AttendanceEditor to remount with fresh server data instead of stale client state.
+  const attendanceKey = attendance.map((a) => `${a.id}-${a.present}-${a.didCleanup}`).join(",");
 
   return (
     <div className="space-y-6">
@@ -152,7 +155,7 @@ export default async function TrainingDetailPage({ params }: PageProps<"/trainin
             .
           </p>
         </div>
-        <AttendanceEditor sessionId={sessionId} players={attendanceRows} action={saveAttendance} />
+        <AttendanceEditor key={attendanceKey} sessionId={sessionId} players={attendanceRows} action={saveAttendance} />
       </section>
     </div>
   );
