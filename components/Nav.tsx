@@ -16,14 +16,14 @@ export default function Nav() {
   const pathname = usePathname();
   return (
     <header className="no-print border-b border-zinc-200 bg-white">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-        <Link href="/" className="flex items-center gap-2 font-semibold text-zinc-900">
+      <div className="mx-auto flex max-w-5xl flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <Link href="/" className="flex shrink-0 items-center gap-2 font-semibold text-zinc-900">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-600 text-white">
             ⚽
           </span>
           <span>Trainingsplanner</span>
         </Link>
-        <nav className="flex items-center gap-1 text-sm">
+        <nav className="flex flex-wrap items-center gap-1 text-sm">
           {LINKS.map((link) => {
             const active =
               pathname === link.href || pathname.startsWith(link.href + "/");
