@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FORMATIONS, FORMATION_KEYS, getFormation } from "@/lib/formations";
 import {
   LINEUP_ROLE_LABELS,
@@ -73,6 +73,38 @@ export default function LineupPitch({
   const [drag, setDrag] = useState<{ playerId: number; x: number; y: number } | null>(
     null,
   );
+  // Mirrors `drag.x/y` for the auto-scroll rAF loop, which needs the latest
+  // pointer position without waiting on React state/render.
+  const dragPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Auto-scroll the page while dragging: the drop target (pitch) is often below the
+  // fold on mobile, and the drag overlay's `touch-none` blocks the normal scroll
+  // gesture, so without this a player can never be carried onto an off-screen pitch.
+  useEffect(() => {
+    if (drag == null) return;
+    const EDGE = 90; // px from viewport top/bottom that triggers scrolling
+    const MAX_SPEED = 18; // px per frame at the very edge
+    let raf = 0;
+    const tick = () => {
+      const pos = dragPosRef.current;
+      if (pos) {
+        const vh = window.innerHeight;
+        let dy = 0;
+        if (pos.y < EDGE) {
+          dy = -MAX_SPEED * (1 - pos.y / EDGE);
+        } else if (pos.y > vh - EDGE) {
+          dy = MAX_SPEED * (1 - (vh - pos.y) / EDGE);
+        }
+        if (dy !== 0) window.scrollBy(0, dy);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // Depend on the player id (stable for the duration of a drag), not the whole
+    // `drag` object, which gets a new x/y on every pointer move.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag?.playerId]);
 
   const byId = useMemo(() => new Map(players.map((p) => [p.playerId, p])), [players]);
 
@@ -135,6 +167,7 @@ export default function LineupPitch({
   // --- drag handling --------------------------------------------------------
   function startDrag(playerId: number, e: React.PointerEvent) {
     e.preventDefault();
+    dragPosRef.current = { x: e.clientX, y: e.clientY };
     setDrag({ playerId, x: e.clientX, y: e.clientY });
   }
 
@@ -157,6 +190,7 @@ export default function LineupPitch({
     if (!drag) return;
     const pid = drag.playerId;
     const m = clientToMetres(clientX, clientY);
+    dragPosRef.current = null;
     setDrag(null);
     if (!m) {
       benchPlayer(pid);
@@ -529,11 +563,15 @@ export default function LineupPitch({
       {drag && draggedPlayer && (
         <div
           className="fixed inset-0 z-50 touch-none"
-          onPointerMove={(e) =>
-            setDrag((d) => (d ? { ...d, x: e.clientX, y: e.clientY } : d))
-          }
+          onPointerMove={(e) => {
+            dragPosRef.current = { x: e.clientX, y: e.clientY };
+            setDrag((d) => (d ? { ...d, x: e.clientX, y: e.clientY } : d));
+          }}
           onPointerUp={(e) => endDrag(e.clientX, e.clientY)}
-          onPointerCancel={() => setDrag(null)}
+          onPointerCancel={() => {
+            dragPosRef.current = null;
+            setDrag(null);
+          }}
         >
           <div
             className="pointer-events-none absolute grid h-9 w-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-emerald-600 text-xs font-bold text-white shadow-lg"
