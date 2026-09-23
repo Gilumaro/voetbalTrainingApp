@@ -77,7 +77,7 @@ export default function AttendanceEditor({
                     type="checkbox"
                     checked={r.didCleanup}
                     onChange={() => toggle(r.playerId, "didCleanup")}
-                    disabled={!r.present || (cleanupCount >= 2 && !r.didCleanup)}
+                    disabled={!r.present}
                     className="h-4 w-4 disabled:opacity-30"
                   />
                 </td>

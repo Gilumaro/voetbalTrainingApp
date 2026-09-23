@@ -45,7 +45,9 @@ export function pickCleaners(players: CleanupCandidate[], rng: () => number): nu
 /**
  * Recalculate which players are assigned cleanup for every session from today
  * onwards (date ≥ midnight today), in chronological order. Past sessions are
- * left untouched and used as the baseline for cumulative counts.
+ * left untouched and used as the baseline for cumulative counts. Sessions whose
+ * attendance the coach has explicitly confirmed are left untouched too — only
+ * their existing cleanup count feeds the fairness tally.
  */
 export async function reassignCleanups(): Promise<void> {
   const today = new Date();
@@ -71,6 +73,17 @@ export async function reassignCleanups(): Promise<void> {
   for (const session of futureSessions) {
     if (session.attendance.length === 0) continue;
 
+    // The coach has explicitly saved attendance for this session — whatever
+    // cleanup count they chose (including 0) is authoritative; only tally it.
+    if (session.attendanceConfirmed) {
+      for (const a of session.attendance) {
+        if (a.didCleanup && a.present) {
+          counts.set(a.playerId, (counts.get(a.playerId) ?? 0) + 1);
+        }
+      }
+      continue;
+    }
+
     const presentPlayers: CleanupCandidate[] = session.attendance
       .filter((a) => a.present)
       .map((a) => ({ playerId: a.playerId, cleanupCount: counts.get(a.playerId) ?? 0 }));
@@ -94,10 +107,12 @@ export async function reassignCleanups(): Promise<void> {
 }
 
 /**
- * Assign 2 cleanup players to every session that currently has fewer than 2.
+ * Assign 2 cleanup players to every session that currently has fewer than 2
+ * AND whose attendance the coach hasn't explicitly confirmed yet — a coach-saved
+ * session keeps whatever cleanup count they chose, including 0.
  * Sessions with no attendance records get records created for all active players
  * (defaulting to present). Processes chronologically so the fairness counts
- * accumulate correctly. Idempotent: sessions already at ≥ 2 are skipped.
+ * accumulate correctly. Idempotent: sessions already at ≥ 2 (or confirmed) are skipped.
  */
 export async function backfillCleanupAssignments(): Promise<void> {
   const sessions = await prisma.session.findMany({
@@ -106,7 +121,9 @@ export async function backfillCleanupAssignments(): Promise<void> {
   });
 
   const needsWork = sessions.some(
-    (s) => s.attendance.filter((a) => a.didCleanup && a.present).length < 2,
+    (s) =>
+      !s.attendanceConfirmed &&
+      s.attendance.filter((a) => a.didCleanup && a.present).length < 2,
   );
   if (!needsWork) return;
 
@@ -120,7 +137,9 @@ export async function backfillCleanupAssignments(): Promise<void> {
   for (const session of sessions) {
     const existingCleaners = session.attendance.filter((a) => a.didCleanup && a.present);
 
-    if (existingCleaners.length >= 2) {
+    // The coach has explicitly saved attendance for this session — respect
+    // whatever cleanup count they chose (including 0), just tally it.
+    if (session.attendanceConfirmed || existingCleaners.length >= 2) {
       for (const c of existingCleaners) {
         counts.set(c.playerId, (counts.get(c.playerId) ?? 0) + 1);
       }

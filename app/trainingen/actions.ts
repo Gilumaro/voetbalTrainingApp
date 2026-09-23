@@ -124,6 +124,10 @@ export async function saveAttendance(sessionId: number, formData: FormData) {
         didCleanup: r.didCleanup,
       })),
     }),
+    prisma.session.update({
+      where: { id: sessionId },
+      data: { attendanceConfirmed: true },
+    }),
   ]);
 
   if (triggerReassign) {

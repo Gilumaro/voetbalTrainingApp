@@ -83,16 +83,17 @@ model DrillAid {
 
 /// A saved (generated then refined) training session.
 model Session {
-  id          Int      @id @default(autoincrement())
-  date        DateTime @default(now())
-  label       String?
-  ageCategory String // e.g. "U15"
-  theme       String
-  durationMin Int
-  players     Int
-  spaceType   String // HALF | QUARTER | FULL | INDOOR | PRACTICE
-  notes       String?
-  createdAt   DateTime @default(now())
+  id                  Int      @id @default(autoincrement())
+  date                DateTime @default(now())
+  label               String?
+  ageCategory         String // e.g. "U15"
+  theme               String
+  durationMin         Int
+  players             Int
+  spaceType           String // HALF | QUARTER | FULL | INDOOR | PRACTICE
+  notes               String?
+  attendanceConfirmed Boolean  @default(false)
+  createdAt           DateTime @default(now())
 
   blocks     SessionBlock[]
   attendance Attendance[]
