@@ -29,14 +29,17 @@ export type PlayerHistoryEntry = {
 
 export type PlayerHistory = {
   absences: PlayerHistoryEntry[];
-  cleanups: PlayerHistoryEntry[];
+  cleanupsPast: PlayerHistoryEntry[];
+  cleanupsUpcoming: PlayerHistoryEntry[];
 };
 
 /**
  * Dates a player was absent (from a training or a match) and dates they helped
- * clean up (trainings only), each linking to the specific training/match. Absence
- * from a match is read off the lineup role (UNAVAILABLE), since matches have no
- * separate attendance record.
+ * (or are scheduled to help) clean up (trainings only), each linking to the specific
+ * training/match. Absence from a match is read off the lineup role (UNAVAILABLE),
+ * since matches have no separate attendance record. Cleanups are split into past
+ * (already done) and upcoming (assigned for a future training) so the coach can see
+ * what's still ahead.
  */
 export async function getPlayerHistory(playerId: number): Promise<PlayerHistory> {
   const [absentTrainings, cleanupTrainings, unavailableMatches] = await Promise.all([
@@ -67,15 +70,23 @@ export async function getPlayerHistory(playerId: number): Promise<PlayerHistory>
     })),
   ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
-  const cleanups: PlayerHistoryEntry[] = cleanupTrainings
-    .map((a) => ({
-      date: a.session.date,
-      href: `/trainingen/${a.sessionId}`,
-      label: a.session.label ?? "Training",
-    }))
-    .sort((a, b) => b.date.getTime() - a.date.getTime());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-  return { absences, cleanups };
+  const cleanups: PlayerHistoryEntry[] = cleanupTrainings.map((a) => ({
+    date: a.session.date,
+    href: `/trainingen/${a.sessionId}`,
+    label: a.session.label ?? "Training",
+  }));
+
+  const cleanupsPast = cleanups
+    .filter((c) => c.date < today)
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+  const cleanupsUpcoming = cleanups
+    .filter((c) => c.date >= today)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  return { absences, cleanupsPast, cleanupsUpcoming };
 }
 
 /** "Voornaam Achternaam" (achternaam optional). */
