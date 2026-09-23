@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getPlayer, playerName } from "@/lib/players";
+import { getPlayer, getPlayerHistory, playerName, type PlayerHistoryEntry } from "@/lib/players";
 import { POSITION_LABELS, type PositionCode } from "@/lib/enums";
 import { addPlayerComment, deletePlayer, deletePlayerComment } from "../actions";
 
@@ -18,6 +18,8 @@ export default async function PlayerDetailPage({ params }: PageProps<"/team/[id]
   const { id } = await params;
   const player = await getPlayer(Number(id));
   if (!player) notFound();
+
+  const history = await getPlayerHistory(player.id);
 
   const del = deletePlayer.bind(null, player.id);
   const addComment = addPlayerComment.bind(null, player.id);
@@ -76,6 +78,15 @@ export default async function PlayerDetailPage({ params }: PageProps<"/team/[id]
         )}
       </dl>
 
+      <div className="grid gap-6 sm:grid-cols-2">
+        <HistorySection title="Afwezig geweest" entries={history.absences} fmtDate={fmtDate} />
+        <HistorySection
+          title="Schoonmaakdienst gedaan"
+          entries={history.cleanups}
+          fmtDate={fmtDate}
+        />
+      </div>
+
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-900">Opmerkingen</h2>
 
@@ -124,6 +135,39 @@ export default async function PlayerDetailPage({ params }: PageProps<"/team/[id]
         )}
       </section>
     </div>
+  );
+}
+
+function HistorySection({
+  title,
+  entries,
+  fmtDate,
+}: {
+  title: string;
+  entries: PlayerHistoryEntry[];
+  fmtDate: (d: Date) => string;
+}) {
+  return (
+    <section className="space-y-2 rounded-xl border border-zinc-200 bg-white p-5">
+      <h2 className="text-sm font-semibold text-zinc-900">{title}</h2>
+      {entries.length === 0 ? (
+        <p className="text-sm text-zinc-500">Geen data.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {entries.map((entry, i) => (
+            <li key={i}>
+              <Link
+                href={entry.href}
+                className="flex items-baseline justify-between gap-3 text-sm text-emerald-700 hover:underline"
+              >
+                <span>{entry.label}</span>
+                <span className="shrink-0 text-xs text-zinc-400">{fmtDate(entry.date)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
