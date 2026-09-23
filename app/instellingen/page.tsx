@@ -6,6 +6,7 @@ import {
   type SpaceType,
 } from "@/lib/enums";
 import { updateSettings } from "./actions";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -154,12 +155,9 @@ export default async function SettingsPage({
           </div>
         </fieldset>
 
-        <button
-          type="submit"
-          className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white transition hover:bg-emerald-700"
-        >
+        <SubmitButton className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white transition hover:bg-emerald-700">
           Opslaan
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );

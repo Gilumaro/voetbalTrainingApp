@@ -1,4 +1,5 @@
 import { POSITION_CODES, POSITION_LABELS } from "@/lib/enums";
+import SubmitButton from "./SubmitButton";
 
 export type PlayerFormValues = {
   firstName: string;
@@ -125,12 +126,9 @@ export default function PlayerForm({
         Actief in selectie
       </label>
 
-      <button
-        type="submit"
-        className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white hover:bg-emerald-700"
-      >
+      <SubmitButton className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white hover:bg-emerald-700">
         {submitLabel}
-      </button>
+      </SubmitButton>
     </form>
   );
 }

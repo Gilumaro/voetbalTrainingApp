@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import SubmitButton from "./SubmitButton";
 
 export type AttendancePlayer = {
   playerId: number;
@@ -109,12 +110,9 @@ export default function AttendanceEditor({
           })),
         )}
       />
-      <button
-        type="submit"
-        className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white hover:bg-emerald-700"
-      >
+      <SubmitButton className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white hover:bg-emerald-700">
         Opslaan
-      </button>
+      </SubmitButton>
     </form>
   );
 }

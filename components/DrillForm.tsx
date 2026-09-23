@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PitchDiagram, { type DiagramAction, type DiagramAid } from "./PitchDiagram";
+import SubmitButton from "./SubmitButton";
 import {
   ACTION_KINDS,
   ACTION_KIND_LABELS,
@@ -361,10 +362,9 @@ export default function DrillForm({
           <input type="hidden" name="aids" value={JSON.stringify(aids)} />
           <input type="hidden" name="actions" value={JSON.stringify(actions)} />
           <input type="hidden" name="steps" value={JSON.stringify(steps.map((s) => s.trim()).filter(Boolean))} />
-          <button type="submit"
-            className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-semibold text-white hover:bg-emerald-700">
+          <SubmitButton className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-semibold text-white hover:bg-emerald-700">
             {submitLabel}
-          </button>
+          </SubmitButton>
         </div>
       </div>
     </form>

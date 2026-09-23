@@ -1,5 +1,6 @@
 import { HOME_AWAY, HOME_AWAY_LABELS } from "@/lib/enums";
 import { FORMATIONS, FORMATION_KEYS } from "@/lib/formations";
+import SubmitButton from "./SubmitButton";
 
 export type MatchFormValues = {
   date?: Date | string | null;
@@ -125,12 +126,9 @@ export default function MatchForm({
         />
       </label>
 
-      <button
-        type="submit"
-        className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white hover:bg-emerald-700"
-      >
+      <SubmitButton className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white hover:bg-emerald-700">
         {submitLabel}
-      </button>
+      </SubmitButton>
     </form>
   );
 }
