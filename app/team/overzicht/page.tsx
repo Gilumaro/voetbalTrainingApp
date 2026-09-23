@@ -33,7 +33,8 @@ export default async function OverviewPage() {
               <tr>
                 <th className="px-4 py-2 font-medium">Speler</th>
                 <th className="px-4 py-2 text-center font-medium">Aanwezig</th>
-                <th className="px-4 py-2 text-center font-medium">Afwezig</th>
+                <th className="px-4 py-2 text-center font-medium">Afwezig training</th>
+                <th className="px-4 py-2 text-center font-medium">Afwezig wedstrijd</th>
                 <th className="px-4 py-2 text-center font-medium">Opgeruimd</th>
               </tr>
             </thead>
@@ -58,7 +59,8 @@ export default async function OverviewPage() {
                     )}
                   </td>
                   <td className="px-4 py-2 text-center text-zinc-700">{r.present}</td>
-                  <td className="px-4 py-2 text-center text-zinc-700">{r.absent}</td>
+                  <td className="px-4 py-2 text-center text-zinc-700">{r.absentTraining}</td>
+                  <td className="px-4 py-2 text-center text-zinc-700">{r.absentMatch}</td>
                   <td className="px-4 py-2 text-center font-semibold text-zinc-800">
                     {r.cleanups}
                   </td>

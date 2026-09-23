@@ -28,13 +28,14 @@ export type PlayerHistoryEntry = {
 };
 
 export type PlayerHistory = {
-  absences: PlayerHistoryEntry[];
+  absencesTraining: PlayerHistoryEntry[];
+  absencesMatch: PlayerHistoryEntry[];
   cleanupsPast: PlayerHistoryEntry[];
   cleanupsUpcoming: PlayerHistoryEntry[];
 };
 
 /**
- * Dates a player was absent (from a training or a match) and dates they helped
+ * Dates a player was absent from a training and/or a match, and dates they helped
  * (or are scheduled to help) clean up (trainings only), each linking to the specific
  * training/match. Absence from a match is read off the lineup role (UNAVAILABLE),
  * since matches have no separate attendance record. Cleanups are split into past
@@ -57,18 +58,21 @@ export async function getPlayerHistory(playerId: number): Promise<PlayerHistory>
     }),
   ]);
 
-  const absences: PlayerHistoryEntry[] = [
-    ...absentTrainings.map((a) => ({
+  const absencesTraining: PlayerHistoryEntry[] = absentTrainings
+    .map((a) => ({
       date: a.session.date,
       href: `/trainingen/${a.sessionId}`,
       label: a.session.label ?? "Training",
-    })),
-    ...unavailableMatches.map((l) => ({
+    }))
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  const absencesMatch: PlayerHistoryEntry[] = unavailableMatches
+    .map((l) => ({
       date: l.match.date,
       href: `/wedstrijden/${l.matchId}`,
       label: `Wedstrijd vs ${l.match.opponent}`,
-    })),
-  ].sort((a, b) => b.date.getTime() - a.date.getTime());
+    }))
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -86,7 +90,7 @@ export async function getPlayerHistory(playerId: number): Promise<PlayerHistory>
     .filter((c) => c.date >= today)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 
-  return { absences, cleanupsPast, cleanupsUpcoming };
+  return { absencesTraining, absencesMatch, cleanupsPast, cleanupsUpcoming };
 }
 
 /** "Voornaam Achternaam" (achternaam optional). */

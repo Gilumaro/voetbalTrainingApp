@@ -79,7 +79,16 @@ export default async function PlayerDetailPage({ params }: PageProps<"/team/[id]
       </dl>
 
       <div className="grid gap-6 sm:grid-cols-2">
-        <HistorySection title="Afwezig geweest" entries={history.absences} fmtDate={fmtDate} />
+        <HistorySection
+          title="Afwezig bij training"
+          entries={history.absencesTraining}
+          fmtDate={fmtDate}
+        />
+        <HistorySection
+          title="Afwezig bij wedstrijd"
+          entries={history.absencesMatch}
+          fmtDate={fmtDate}
+        />
         <HistorySection
           title="Opruimdienst ingepland"
           entries={history.cleanupsUpcoming}

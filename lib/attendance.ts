@@ -194,14 +194,17 @@ export type OverviewRow = {
   name: string;
   active: boolean;
   present: number;
-  absent: number;
+  absentTraining: number;
+  absentMatch: number;
   cleanups: number;
 };
 
 /**
- * Per-player attendance & cleanup tallies across all recorded trainings, so the
- * coach can spot who has cleaned up least/most and who is often absent. Sorted by
- * fewest cleanups first (the fairness view for assigning the next cleanup duty).
+ * Per-player attendance & cleanup tallies across all recorded trainings and matches,
+ * so the coach can spot who has cleaned up least/most and who is often absent. Match
+ * absence is read off the lineup role (UNAVAILABLE), since matches have no separate
+ * attendance record. Sorted by fewest cleanups first (the fairness view for assigning
+ * the next cleanup duty).
  */
 export async function getAttendanceOverview(): Promise<OverviewRow[]> {
   const today = new Date();
@@ -209,24 +212,32 @@ export async function getAttendanceOverview(): Promise<OverviewRow[]> {
 
   const players = await prisma.player.findMany({
     orderBy: [{ active: "desc" }, { firstName: "asc" }],
-    include: { attendance: { where: { session: { date: { lt: today } } } } },
+    include: {
+      attendance: { where: { session: { date: { lt: today } } } },
+      lineupEntries: { where: { role: "UNAVAILABLE", match: { date: { lt: today } } } },
+    },
   });
 
   const rows: OverviewRow[] = players.map((p) => {
     const present = p.attendance.filter((a) => a.present).length;
-    const absent = p.attendance.filter((a) => !a.present).length;
+    const absentTraining = p.attendance.filter((a) => !a.present).length;
+    const absentMatch = p.lineupEntries.length;
     const cleanups = p.attendance.filter((a) => a.didCleanup).length;
     return {
       playerId: p.id,
       name: playerName(p),
       active: p.active,
       present,
-      absent,
+      absentTraining,
+      absentMatch,
       cleanups,
     };
   });
 
   return rows.sort(
-    (a, b) => a.cleanups - b.cleanups || b.absent - a.absent || a.name.localeCompare(b.name),
+    (a, b) =>
+      a.cleanups - b.cleanups ||
+      b.absentTraining + b.absentMatch - (a.absentTraining + a.absentMatch) ||
+      a.name.localeCompare(b.name),
   );
 }
