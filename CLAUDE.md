@@ -47,36 +47,44 @@ The app is self-hosted with Docker + a **volume-backed SQLite** file (`training-
 `/data/app.db`), which is **separate** from the local dev DB (`file:./dev.db`). So a change
 that works in `npm run dev` does **not** automatically reach the running container.
 
-**The remote server is updated by hand, every time — nothing auto-deploys.** The server
-pulls the code over git via SSH (`build: .` in `docker-compose.yml` builds the image from
-that pulled source), so every deploy is:
+**The remote server is updated by hand, every time — nothing auto-deploys.** The server no
+longer builds the image itself: `docker-compose.yml` pulls a prebuilt image from Docker Hub
+(`image: ivovandenberk/voetballapp:latest`), built and pushed from this dev machine. Every
+deploy is:
 
-1. **From this dev machine:** commit + push the change (I don't push unless asked — remind
-   the coach it's a prerequisite).
-2. **On the server (SSH session):** `cd` to the repo, `git pull`, then run the matching
-   command from the **Remote server** column below.
+1. **From this dev machine:** commit + push the code change (I don't push unless asked —
+   remind the coach it's a prerequisite), then build and push the image:
+   `docker build -t ivovandenberk/voetballapp:latest .` followed by
+   `docker push ivovandenberk/voetballapp:latest`. Docker Desktop must be running locally.
+2. **On the server (SSH session):** `cd` to the repo (`git pull` only needed if
+   `docker-compose.yml` itself changed), then run the matching command from the **Remote
+   server** column below.
 
 > **Service name on the server is `voetbalapp`, not `app`.** The committed
 > `docker-compose.yml` names the service `app`, but the coach's server compose renames it,
-> so `docker compose exec`/`run` on the server target **`voetbalapp`** (e.g.
+> so `docker compose exec`/`run`/`pull` on the server target **`voetbalapp`** (e.g.
 > `sudo docker compose exec voetbalapp npm run import-drills`). Commands also need `sudo`
-> there. The table below uses `app`; substitute `voetbalapp` for the real server.
+> there. The table below uses `app`; substitute `voetbalapp` for the real server. If the
+> `ivovandenberk/voetballapp` Docker Hub repo is private, the server needs a one-time
+> `docker login` before its first `pull`.
 
 **At the end of any change, state which of these the coach must run (or "no deploy step
 needed"). Never leave it implied.** Pick by what changed:
 
-| What changed | Local dev | Remote server (after `ssh` → `git pull`) |
+| What changed | Local dev | Remote server (after `ssh`) |
 | --- | --- | --- |
-| Code / UI only (no DB) | hot reload, nothing | `docker compose up -d --build` |
-| `schema.prisma` (new migration) | `npx prisma migrate dev` + `npx prisma generate` | `docker compose up -d --build` (entrypoint runs `migrate deploy`); **no `-v`** |
-| `SEED_DRILLS` / `scripts/seed.ts` (seed content) | `npm run seed` (wipes+reseeds dev) | `docker compose down -v && docker compose up -d --build` — **`-v` wipes the volume**; confirm first [DOM-16] |
-| Additive drill data (`lib/imported-drills.ts`) | `npm run import-drills` | `docker compose up -d --build` **then** `docker compose exec app npm run import-drills` |
+| Code / UI only (no DB) | hot reload, nothing | `docker compose pull && docker compose up -d` |
+| `schema.prisma` (new migration) | `npx prisma migrate dev` + `npx prisma generate` | `docker compose pull && docker compose up -d` (entrypoint runs `migrate deploy`); **no `-v`** |
+| `SEED_DRILLS` / `scripts/seed.ts` (seed content) | `npm run seed` (wipes+reseeds dev) | `docker compose down -v && docker compose pull && docker compose up -d` — **`-v` wipes the volume**; confirm first [DOM-16] |
+| Additive drill data (`lib/imported-drills.ts`) | `npm run import-drills` | `docker compose pull && docker compose up -d` **then** `docker compose exec app npm run import-drills` |
 
 Notes: `-v` **destroys** the volume DB (all coach-created data) — only for a deliberate
-reseed, and confirm before suggesting it. A plain `up -d --build` rebuilds the image but
+reseed, and confirm before suggesting it. A plain `pull && up -d` fetches the new image but
 leaves the volume (and its data) intact; it will **not** insert new rows on its own — data
-changes need the matching `seed`/`import-drills` step run against the target DB. The
-`git pull` only moves code, never the volume DB, so drill/seed steps still run separately.
+changes need the matching `seed`/`import-drills` step run against the target DB. Pushing the
+image only moves code, never the volume DB, so drill/seed steps still run separately. Tag
+each build with something more traceable than `latest` (date or git short SHA) when you want
+to be able to roll the server back to a specific build later.
 
 ## Non-negotiables (the short list — details in docs/guidelines)
 

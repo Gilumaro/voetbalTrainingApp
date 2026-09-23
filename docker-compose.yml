@@ -1,6 +1,6 @@
 services:
   app:
-    build: .
+    image: ivovandenberk/voetballapp:latest
     container_name: voetbal-training-app
     ports:
       - "3000:3000"
